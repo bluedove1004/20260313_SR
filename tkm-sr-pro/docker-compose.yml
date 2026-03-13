@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: tkm_postgres
+    environment:
+      POSTGRES_DB: tkm_sr
+      POSTGRES_USER: tkm_user
+      POSTGRES_PASSWORD: tkm_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tkm_user -d tkm_sr"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  es:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    container_name: tkm_es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tkm_django
+    command: /app/entrypoint.sh
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings
+      - POSTGRES_DB=tkm_sr
+      - POSTGRES_USER=tkm_user
+      - POSTGRES_PASSWORD=tkm_password
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - ELASTICSEARCH_URL=http://es:9200
+      - AI_ENGINE_URL=http://ai_engine:8001
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      es:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+
+  ai_engine:
+    build:
+      context: ./backend/ai_engine
+      dockerfile: Dockerfile
+    container_name: tkm_fastapi
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend/ai_engine:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tkm_react
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  es_data:
