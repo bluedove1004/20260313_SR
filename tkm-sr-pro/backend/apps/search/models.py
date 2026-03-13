@@ -48,8 +48,14 @@ class LiteratureRecord(models.Model):
         SCREENING_PENDING = 'SCREENING_PENDING', _('Pending Screening')
         RCT_INCLUDED = 'RCT_INCLUDED', _('Included as RCT')
         RCT_EXCLUDED = 'RCT_EXCLUDED', _('Excluded (Not RCT)')
+        FULLTEXT_INCLUDED = 'FULLTEXT_INCLUDED', _('Included (Full-text)')
+        FULLTEXT_EXCLUDED = 'FULLTEXT_EXCLUDED', _('Excluded (Full-text)')
         EXTRACTED = 'EXTRACTED', _('PICO Extracted')
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.IMPORTED)
+
+    # Full-text screening fields
+    exclusion_reason = models.TextField(blank=True, null=True)
+    reviewer_notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
         return f"[{self.source_db}] {self.title[:50]}"

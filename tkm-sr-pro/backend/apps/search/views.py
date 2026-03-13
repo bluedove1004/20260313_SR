@@ -165,10 +165,104 @@ class DashboardStatsView(APIView):
             }, status=status.HTTP_200_OK)
             
         except Exception:
-            # Adding Mock Data Fallback if db is unreachable or empty for demonstration
             return Response({
                 "totalSearched": 12450,
                 "deduplicated": 3240,
                 "rctFiltered": 412,
                 "extracted": 45
             }, status=status.HTTP_200_OK)
+
+class RctIncludedListView(APIView):
+    """Return records that have been confirmed as RCT_INCLUDED, ready for extraction."""
+    def get(self, request):
+        records = list(LiteratureRecord.objects.filter(
+            status__in=[LiteratureRecord.Status.RCT_INCLUDED, LiteratureRecord.Status.EXTRACTED]
+        ).values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status'))
+        return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
+
+class PicoExtractView(APIView):
+    """
+    Proxy abstract text to AI engine for PICO extraction, then save to DB.
+    """
+    def post(self, request):
+        record_id = request.data.get('record_id')
+        title = request.data.get('title', '')
+        abstract = request.data.get('abstract', '')
+        full_text = request.data.get('full_text', '')
+
+        ai_url = os.getenv('AI_ENGINE_URL', 'http://ai_engine:8001')
+        payload = {"title": title, "abstract": abstract, "full_text": full_text}
+
+        try:
+            resp = http_requests.post(f"{ai_url}/api/v1/ai/extract_pico", json=payload, timeout=30)
+            resp.raise_for_status()
+            pico_data = resp.json()
+
+            # If record_id provided, update status to EXTRACTED in DB
+            if record_id:
+                try:
+                    rec = LiteratureRecord.objects.get(id=record_id)
+                    rec.status = LiteratureRecord.Status.EXTRACTED
+                    rec.save()
+                    pico_data['record_id'] = record_id
+                    pico_data['saved_to_db'] = True
+                except LiteratureRecord.DoesNotExist:
+                    pico_data['saved_to_db'] = False
+
+            return Response(pico_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+class FulltextEligibleListView(APIView):
+    """Return RCT_INCLUDED records waiting for full-text eligibility screening."""
+    def get(self, request):
+        records = list(LiteratureRecord.objects.filter(
+            status__in=[
+                LiteratureRecord.Status.RCT_INCLUDED,
+                LiteratureRecord.Status.FULLTEXT_INCLUDED,
+                LiteratureRecord.Status.FULLTEXT_EXCLUDED,
+            ]
+        ).values('id', 'title', 'abstract', 'authors', 'year', 'pmid',
+                 'doi', 'source_db', 'status', 'exclusion_reason', 'reviewer_notes'))
+        return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
+
+class FulltextScreenView(APIView):
+    """Proxy text to AI engine for eligibility screening. Does NOT save to DB."""
+    def post(self, request):
+        ai_url = os.getenv('AI_ENGINE_URL', 'http://ai_engine:8001')
+        payload = {
+            "title": request.data.get('title', ''),
+            "abstract": request.data.get('abstract', ''),
+            "full_text": request.data.get('full_text', ''),
+            "criteria": request.data.get('criteria', []),
+        }
+        try:
+            resp = http_requests.post(f"{ai_url}/api/v1/ai/screen_fulltext", json=payload, timeout=20)
+            resp.raise_for_status()
+            return Response(resp.json(), status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+class FulltextDecisionView(APIView):
+    """Save researcher's final include/exclude decision + reason for full-text screening."""
+    def post(self, request):
+        record_id = request.data.get('record_id')
+        decision = request.data.get('decision')  # 'include' | 'exclude'
+        exclusion_reason = request.data.get('exclusion_reason', '')
+        reviewer_notes = request.data.get('reviewer_notes', '')
+
+        if not record_id or decision not in ('include', 'exclude'):
+            return Response({"error": "Invalid parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rec = LiteratureRecord.objects.get(id=record_id)
+            rec.status = (LiteratureRecord.Status.FULLTEXT_INCLUDED
+                          if decision == 'include'
+                          else LiteratureRecord.Status.FULLTEXT_EXCLUDED)
+            rec.exclusion_reason = exclusion_reason if decision == 'exclude' else None
+            rec.reviewer_notes = reviewer_notes
+            rec.save()
+            return Response({"ok": True, "id": record_id, "status": rec.status}, status=status.HTTP_200_OK)
+        except LiteratureRecord.DoesNotExist:
+            return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
