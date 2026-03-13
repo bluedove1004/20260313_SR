@@ -15,6 +15,7 @@ const DB_OPTIONS = [
 export default function SearchPage() {
   const { query, setQuery, selectedDBs, toggleDB } = useSearchStore();
   const [isSearching, setIsSearching] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [results, setResults] = useState<any[]>([]);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -33,6 +34,20 @@ export default function SearchPage() {
       alert('검색 중 오류가 발생했습니다.');
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (results.length === 0) return;
+    setIsSaving(true);
+    try {
+      const response = await apiClient.post('/search/save_records/', results);
+      alert(`총 ${response.data.saved_count}건의 문헌이 성공적으로 저장 및 인덱싱되었습니다!`);
+    } catch (error) {
+      console.error('Save error:', error);
+      alert('저장 중 오류가 발생했습니다.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -105,8 +120,12 @@ export default function SearchPage() {
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-gray-900">검색 결과 ({results.length}건)</h2>
-            <button className="text-sm text-tkm-main font-semibold hover:underline bg-tkm-light px-4 py-2 rounded-lg">
-              결과 인덱싱 스토리지에 저장
+            <button 
+              onClick={handleSave}
+              disabled={isSaving}
+              className="text-sm text-tkm-main font-semibold hover:underline bg-tkm-light px-4 py-2 rounded-lg disabled:opacity-50"
+            >
+              {isSaving ? '저장 중...' : '결과 인덱싱 스토리지에 저장'}
             </button>
           </div>
           <div className="space-y-4">

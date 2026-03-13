@@ -6,7 +6,7 @@ class BaseSearchClient:
     def __init__(self, source_name: str):
         self.source_name = source_name
 
-    def search(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
+    def search(self, query: str, max_results: int = 100) -> List[Dict[str, Any]]:
         raise NotImplementedError("Subclasses must implement the search method.")
 
 class PubMedClient(BaseSearchClient):
@@ -14,7 +14,7 @@ class PubMedClient(BaseSearchClient):
         super().__init__("PubMed")
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
-    def search(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
+    def search(self, query: str, max_results: int = 100) -> List[Dict[str, Any]]:
         search_url = f"{self.base_url}/esearch.fcgi"
         search_params = {
             "db": "pubmed",

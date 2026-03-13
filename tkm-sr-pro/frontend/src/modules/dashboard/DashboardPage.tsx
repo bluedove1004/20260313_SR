@@ -7,6 +7,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState({
     totalSearched: 0,
     deduplicated: 0,
+    reviewNeeded: 0,
     rctFiltered: 0,
     extracted: 0
   });
@@ -70,9 +71,16 @@ export default function DashboardPage() {
             <div className="p-2 bg-yellow-50 text-yellow-600 rounded-lg"><Users size={20} /></div>
           </div>
           <div className="mt-4">
-            <div className="text-3xl font-black text-gray-900">{stats.deduplicated.toLocaleString()}</div>
-            <p className="text-sm text-gray-500 mt-1 font-medium flex items-center gap-1">
-               <span className="text-green-600 font-bold">-{calculatePercentage(stats.totalSearched - stats.deduplicated, stats.totalSearched)}%</span> via AI Deduplication
+             <div className="text-3xl font-black text-gray-900">{stats.deduplicated.toLocaleString()}</div>
+             <p className="text-sm text-gray-500 mt-1 font-medium flex flex-col gap-1">
+               <span className="flex items-center gap-1">
+                 <span className="text-green-600 font-bold">-{stats.totalSearched - stats.deduplicated - stats.reviewNeeded}</span> via AI Deduplication
+               </span>
+               {stats.reviewNeeded > 0 && (
+                 <span className="text-yellow-600 font-bold text-xs bg-yellow-50 px-2 py-1 rounded inline-flex w-fit items-center mt-1">
+                   + {stats.reviewNeeded} review pending
+                 </span>
+               )}
             </p>
           </div>
         </div>

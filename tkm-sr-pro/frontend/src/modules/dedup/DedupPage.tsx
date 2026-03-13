@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Layers, Play, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Layers, Play, CheckCircle, AlertTriangle, Database } from 'lucide-react';
 import { apiClient } from '../../api/client';
 
 const INITIAL_DATA = [
@@ -49,13 +49,33 @@ export default function DedupPage() {
   const [inputData, setInputData] = useState(JSON.stringify(INITIAL_DATA, null, 2));
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<any[]>([]);
+  const [isDbLoaded, setIsDbLoaded] = useState(false);
+
+  const handleLoadDB = async () => {
+    try {
+      const response = await apiClient.get('/search/imported_records/');
+      const records = response.data.records;
+      setInputData(JSON.stringify(records, null, 2));
+      setIsDbLoaded(true);
+      alert(`${records.length}건의 문헌을 DB 스토리지에서 성공적으로 불러왔습니다!`);
+    } catch (e) {
+      alert("DB 데이터를 불러오는 데 실패했습니다.");
+      console.error(e);
+    }
+  };
 
   const handleRunDedup = async () => {
     setIsRunning(true);
     try {
       const records = JSON.parse(inputData);
-      const response = await apiClient.post('/search/deduplicate/', { records });
+      const response = await apiClient.post('/search/deduplicate/', { 
+        records, 
+        use_db: isDbLoaded 
+      });
       setResults(response.data.results || []);
+      if (isDbLoaded && response.data.results) {
+        alert(`중복 제거 처리가 완료되어, DB 내 상태값이 실시간으로 업데이트되었습니다!`);
+      }
     } catch (e) {
       alert("Invalid JSON format or API Error");
       console.error(e);
@@ -79,7 +99,15 @@ export default function DedupPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Input Source */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">Input Metadata (JSON)</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold text-gray-900">Input Metadata (JSON)</h2>
+            <button
+              onClick={handleLoadDB}
+              className="text-sm px-4 py-2 bg-tkm-light text-tkm-main font-bold rounded-lg hover:bg-green-100 transition-colors flex items-center gap-2"
+            >
+              <Database size={16} /> 실DB 문헌 불러오기
+            </button>
+          </div>
           <textarea
             value={inputData}
             onChange={(e) => setInputData(e.target.value)}
