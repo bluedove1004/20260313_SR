@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Database, FileText, Activity, Loader2, ChevronDown, ChevronUp, Sparkles, CheckCircle2, RefreshCw, User, Zap, BarChart2, ClipboardList } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { useProjectStore } from '../../store/useProjectStore';
 
 interface LitRecord {
   id: string;
@@ -62,18 +63,20 @@ export default function ExtractionPage() {
   const [extracting, setExtracting] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [manualTexts, setManualTexts] = useState<Record<string, string>>({});
+  const { currentProjectId } = useProjectStore();
 
   const loadRecords = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await apiClient.get('/search/rct_included/');
+      const params = currentProjectId ? `?project_id=${currentProjectId}` : '';
+      const res = await apiClient.get(`/search/rct_included/${params}`);
       setRecords(res.data.records);
     } catch (e) {
       console.error(e);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [currentProjectId]);
 
   useEffect(() => { loadRecords(); }, [loadRecords]);
 

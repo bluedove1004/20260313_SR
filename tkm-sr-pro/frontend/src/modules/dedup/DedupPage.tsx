@@ -76,9 +76,14 @@ export default function DedupPage() {
         use_db: isDbLoaded,
         project_id: currentProjectId,
       });
-      setResults(response.data.results || []);
-      if (isDbLoaded && response.data.results) {
-        alert('중복 제거 처리가 완료되어, DB 내 상태값이 실시간으로 업데이트되었습니다!');
+      const data = response.data;
+      setResults(data.results || []);
+      if (isDbLoaded && data) {
+        if (data.duplicates_found > 0) {
+          alert(`중복 제거 처리가 완료되었습니다! ${data.duplicates_found}건의 중복 피어가 발견되어 DB 상태가 업데이트되었습니다.`);
+        } else {
+          alert(`중복 제거 검토 완료! 중복된 문헌이 발견되지 않았습니다. 대상 문헌 모두 다음 단계(선별 대기)로 이동되었습니다.`);
+        }
       }
     } catch (e) {
       alert('Invalid JSON format or API Error');

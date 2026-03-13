@@ -208,11 +208,15 @@ class DashboardStatsView(APIView):
             }, status=status.HTTP_200_OK)
 
 class RctIncludedListView(APIView):
-    """Return records that have been confirmed as RCT_INCLUDED, ready for extraction."""
+    """Return records that have been confirmed as RCT_INCLUDED or FULLTEXT_INCLUDED, ready for extraction."""
     def get(self, request):
         project_id = request.query_params.get('project_id')
         qs = LiteratureRecord.objects.filter(
-            status__in=[LiteratureRecord.Status.RCT_INCLUDED, LiteratureRecord.Status.EXTRACTED]
+            status__in=[
+                LiteratureRecord.Status.RCT_INCLUDED,
+                LiteratureRecord.Status.FULLTEXT_INCLUDED,
+                LiteratureRecord.Status.EXTRACTED
+            ]
         )
         if project_id:
             qs = qs.filter(project_id=project_id)
