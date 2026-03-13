@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FileCheck, Activity, Check, X, AlertCircle, Loader2, RefreshCw, Database } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { useProjectStore } from '../../store/useProjectStore';
 
 interface LitRecord {
   id: string;
@@ -25,11 +26,13 @@ export default function RctScreeningPage() {
   const [predictions, setPredictions] = useState<Record<string, Prediction>>({});
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
   const [screeningCount, setScreeningCount] = useState(0);
+  const { currentProjectId } = useProjectStore();
 
   const loadPendingRecords = useCallback(async () => {
     setIsLoadingRecords(true);
     try {
-      const response = await apiClient.get('/search/screening_pending/');
+      const params = currentProjectId ? `?project_id=${currentProjectId}` : '';
+      const response = await apiClient.get(`/search/screening_pending/${params}`);
       const recs: LitRecord[] = response.data.records;
       setRecords(recs);
       setScreeningCount(response.data.count);

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSearchStore } from '../../store/useSearchStore';
 import { Search, Loader2 } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { useProjectStore } from '../../store/useProjectStore';
 
 const DB_OPTIONS = [
   { id: 'PubMed', label: 'PubMed', color: 'bg-blue-100 text-blue-800' },
@@ -17,6 +18,7 @@ export default function SearchPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [results, setResults] = useState<any[]>([]);
+  const { currentProjectId } = useProjectStore();
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,8 +43,10 @@ export default function SearchPage() {
     if (results.length === 0) return;
     setIsSaving(true);
     try {
-      const response = await apiClient.post('/search/save_records/', results);
-      alert(`총 ${response.data.saved_count}건의 문헌이 성공적으로 저장 및 인덱싱되었습니다!`);
+      const payload = results.map(r => ({ ...r, _project_id: currentProjectId }));
+      const response = await apiClient.post('/search/save_records/', payload);
+      const skipped = response.data.skipped || 0;
+      alert(`총 ${response.data.saved_count}건 저장 완료!${skipped > 0 ? ` (제목 없는 ${skipped}건 스킵)` : ''}`);
     } catch (error) {
       console.error('Save error:', error);
       alert('저장 중 오류가 발생했습니다.');

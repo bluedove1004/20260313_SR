@@ -5,6 +5,7 @@ import {
   Check, X, Shield, ShieldOff, Info
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { useProjectStore } from '../../store/useProjectStore';
 
 interface LitRecord {
   id: string;
@@ -64,11 +65,13 @@ export default function FulltextScreeningPage() {
   const [records, setRecords] = useState<LitRecord[]>([]);
   const [states, setStates] = useState<Record<string, RecordState>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const { currentProjectId } = useProjectStore();
 
   const loadRecords = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await apiClient.get('/search/fulltext_eligible/');
+      const params = currentProjectId ? `?project_id=${currentProjectId}` : '';
+      const res = await apiClient.get(`/search/fulltext_eligible/${params}`);
       const recs: LitRecord[] = res.data.records;
       setRecords(recs);
       const init: Record<string, RecordState> = {};
@@ -86,7 +89,7 @@ export default function FulltextScreeningPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [currentProjectId]);
 
   useEffect(() => { loadRecords(); }, [loadRecords]);
 

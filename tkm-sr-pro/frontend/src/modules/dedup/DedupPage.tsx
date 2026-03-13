@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Layers, Play, CheckCircle, AlertTriangle, Database } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { useProjectStore } from '../../store/useProjectStore';
 
 const INITIAL_DATA = [
   {
@@ -50,16 +51,18 @@ export default function DedupPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<any[]>([]);
   const [isDbLoaded, setIsDbLoaded] = useState(false);
+  const { currentProjectId } = useProjectStore();
 
   const handleLoadDB = async () => {
     try {
-      const response = await apiClient.get('/search/imported_records/');
+      const params = currentProjectId ? `?project_id=${currentProjectId}` : '';
+      const response = await apiClient.get(`/search/imported_records/${params}`);
       const records = response.data.records;
       setInputData(JSON.stringify(records, null, 2));
       setIsDbLoaded(true);
       alert(`${records.length}건의 문헌을 DB 스토리지에서 성공적으로 불러왔습니다!`);
     } catch (e) {
-      alert("DB 데이터를 불러오는 데 실패했습니다.");
+      alert('DB 데이터를 불러오는 데 실패했습니다.');
       console.error(e);
     }
   };
@@ -68,16 +71,17 @@ export default function DedupPage() {
     setIsRunning(true);
     try {
       const records = JSON.parse(inputData);
-      const response = await apiClient.post('/search/deduplicate/', { 
-        records, 
-        use_db: isDbLoaded 
+      const response = await apiClient.post('/search/deduplicate/', {
+        records,
+        use_db: isDbLoaded,
+        project_id: currentProjectId,
       });
       setResults(response.data.results || []);
       if (isDbLoaded && response.data.results) {
-        alert(`중복 제거 처리가 완료되어, DB 내 상태값이 실시간으로 업데이트되었습니다!`);
+        alert('중복 제거 처리가 완료되어, DB 내 상태값이 실시간으로 업데이트되었습니다!');
       }
     } catch (e) {
-      alert("Invalid JSON format or API Error");
+      alert('Invalid JSON format or API Error');
       console.error(e);
     } finally {
       setIsRunning(false);

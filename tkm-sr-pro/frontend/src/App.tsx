@@ -6,6 +6,7 @@ import RctScreeningPage from './modules/screening_rct/RctScreeningPage';
 import DashboardPage from './modules/dashboard/DashboardPage';
 import ExtractionPage from './modules/extraction/ExtractionPage';
 import FulltextScreeningPage from './modules/screening_fulltext/FulltextScreeningPage';
+import ProjectsPage from './modules/projects/ProjectsPage';
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/dedup" element={<DedupPage />} />
           <Route path="/screening-rct" element={<RctScreeningPage />} />

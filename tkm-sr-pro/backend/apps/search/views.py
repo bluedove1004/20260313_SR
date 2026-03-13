@@ -35,74 +35,101 @@ class SaveRecordsView(APIView):
         records_data = request.data
         if not records_data:
             return Response({"error": "No records provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Ensure a default project exists for Phase 1 MVP
-        default_project, _ = SearchProject.objects.get_or_create(
-            name="Default SR Project", 
-            defaults={"description": "Automatically created project for search results."}
-        )
-        
-        # Inject project ID
+
+        # Determine target project: use _project_id if provided, else find/create default
+        raw_project_id = records_data[0].get('_project_id') if records_data else None
+        if raw_project_id:
+            try:
+                target_project = SearchProject.objects.get(pk=raw_project_id)
+            except SearchProject.DoesNotExist:
+                target_project = None
+        else:
+            target_project = None
+
+        if not target_project:
+            target_project, _ = SearchProject.objects.get_or_create(
+                name="Default SR Project",
+                defaults={"description": "Automatically created project for search results."}
+            )
+
+        # Fields allowed by the LiteratureRecord model
+        ALLOWED_FIELDS = {'title', 'abstract', 'authors', 'journal', 'year', 'doi', 'pmid', 'keywords', 'source_db', 'project'}
+
+        cleaned = []
         for item in records_data:
-            item["project"] = default_project.id
-            item["source_db"] = item.get("source_db", "PubMed")
-            
-        serializer = LiteratureRecordSerializer(data=records_data, many=True)
+            record = {k: v for k, v in item.items() if k in ALLOWED_FIELDS}
+            record["project"] = target_project.id
+            record["source_db"] = record.get("source_db") or item.get("source", "PubMed")
+            # Skip records that have no title (required field)
+            title = record.get("title", "")
+            if not title or not str(title).strip():
+                continue
+            record["title"] = str(title).strip()
+            cleaned.append(record)
+
+        if not cleaned:
+            return Response({"error": "No valid records to save (all missing title)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = LiteratureRecordSerializer(data=cleaned, many=True)
         if serializer.is_valid():
             records = serializer.save()
-            return Response({"saved_count": len(records)}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"saved_count": len(records), "skipped": len(records_data) - len(cleaned)}, status=status.HTTP_201_CREATED)
+        return Response({"error": "Validation failed", "detail": serializer.errors[:3]}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class DeduplicateRecordsView(APIView):
     def post(self, request):
         use_db = request.data.get('use_db', False)
         records = request.data.get('records', [])
-        
+        project_id = request.data.get('project_id')
+
         if use_db and not records:
-            records = list(LiteratureRecord.objects.filter(status=LiteratureRecord.Status.IMPORTED).values(
-                'id', 'title', 'authors', 'abstract', 'year', 'pmid', 'doi'
-            ))
-            
+            qs = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.IMPORTED)
+            if project_id:
+                qs = qs.filter(project_id=project_id)
+            records = list(qs.values('id', 'title', 'authors', 'abstract', 'year', 'pmid', 'doi'))
+
         if not records:
             return Response({"error": "No records provided or found in DB"}, status=status.HTTP_400_BAD_REQUEST)
-            
+
         deduplicator = HybridDeduplicator()
         results = deduplicator.deduplicate(records)
-        
+
         if use_db:
-            # Update statuses in DB
             duplicate_ids = [res['record_b_id'] for res in results if res['status'] == 'auto']
             review_ids = [res['record_b_id'] for res in results if res['status'] == 'review']
-            
             if duplicate_ids:
                 LiteratureRecord.objects.filter(id__in=duplicate_ids).update(status=LiteratureRecord.Status.DEDUP_REJECTED)
             if review_ids:
                 LiteratureRecord.objects.filter(id__in=review_ids).update(status=LiteratureRecord.Status.DEDUP_REVIEW)
-                
             all_ids = [r['id'] for r in records]
             remaining_ids = set(all_ids) - set(duplicate_ids) - set(review_ids)
             if remaining_ids:
                 LiteratureRecord.objects.filter(id__in=remaining_ids).update(status=LiteratureRecord.Status.SCREENING_PENDING)
-                
+
         return Response({
-            "results": results, 
-            "processed_count": len(records), 
+            "results": results,
+            "processed_count": len(records),
             "duplicates_found": len(results)
         }, status=status.HTTP_200_OK)
 
 class ImportedRecordsView(APIView):
     def get(self, request):
-        records = list(LiteratureRecord.objects.filter(status=LiteratureRecord.Status.IMPORTED).values(
-            'id', 'title', 'authors', 'abstract', 'year', 'pmid', 'doi'
-        ))
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.IMPORTED)
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        records = list(qs.values('id', 'title', 'authors', 'abstract', 'year', 'pmid', 'doi'))
         return Response({"records": records}, status=status.HTTP_200_OK)
 
 class ScreeningPendingView(APIView):
     """Return records that are waiting for RCT screening."""
     def get(self, request):
-        records = list(LiteratureRecord.objects.filter(
-            status=LiteratureRecord.Status.SCREENING_PENDING
-        ).values('id', 'title', 'abstract', 'authors', 'year', 'pmid'))
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.SCREENING_PENDING)
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class RctPredictView(APIView):
@@ -141,20 +168,28 @@ class RctDecisionView(APIView):
 
 class DashboardStatsView(APIView):
     def get(self, request):
+        project_id = request.query_params.get('project_id')
         try:
-            total = LiteratureRecord.objects.count()
+            qs = LiteratureRecord.objects
+            if project_id:
+                qs = qs.filter(project_id=project_id)
+
+            total = qs.count()
             if total == 0:
                 raise Exception("Empty DB")
-                
-            dedup_rejected = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.DEDUP_REJECTED).count()
-            review_needed = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.DEDUP_REVIEW).count()
+
+            dedup_rejected = qs.filter(status=LiteratureRecord.Status.DEDUP_REJECTED).count()
+            review_needed = qs.filter(status=LiteratureRecord.Status.DEDUP_REVIEW).count()
             dedup = total - dedup_rejected - review_needed
-            
-            rct = LiteratureRecord.objects.filter(
-                status__in=[LiteratureRecord.Status.RCT_INCLUDED, LiteratureRecord.Status.EXTRACTED]
+
+            rct = qs.filter(
+                status__in=[LiteratureRecord.Status.RCT_INCLUDED,
+                             LiteratureRecord.Status.FULLTEXT_INCLUDED,
+                             LiteratureRecord.Status.FULLTEXT_EXCLUDED,
+                             LiteratureRecord.Status.EXTRACTED]
             ).count()
-            
-            extracted = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.EXTRACTED).count()
+
+            extracted = qs.filter(status=LiteratureRecord.Status.EXTRACTED).count()
             
             return Response({
                 "totalSearched": total,
@@ -175,9 +210,13 @@ class DashboardStatsView(APIView):
 class RctIncludedListView(APIView):
     """Return records that have been confirmed as RCT_INCLUDED, ready for extraction."""
     def get(self, request):
-        records = list(LiteratureRecord.objects.filter(
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
             status__in=[LiteratureRecord.Status.RCT_INCLUDED, LiteratureRecord.Status.EXTRACTED]
-        ).values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status'))
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class PicoExtractView(APIView):
@@ -217,14 +256,18 @@ class PicoExtractView(APIView):
 class FulltextEligibleListView(APIView):
     """Return RCT_INCLUDED records waiting for full-text eligibility screening."""
     def get(self, request):
-        records = list(LiteratureRecord.objects.filter(
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
             status__in=[
                 LiteratureRecord.Status.RCT_INCLUDED,
                 LiteratureRecord.Status.FULLTEXT_INCLUDED,
                 LiteratureRecord.Status.FULLTEXT_EXCLUDED,
             ]
-        ).values('id', 'title', 'abstract', 'authors', 'year', 'pmid',
-                 'doi', 'source_db', 'status', 'exclusion_reason', 'reviewer_notes'))
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid',
+                                 'doi', 'source_db', 'status', 'exclusion_reason', 'reviewer_notes'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class FulltextScreenView(APIView):
@@ -266,3 +309,99 @@ class FulltextDecisionView(APIView):
             return Response({"ok": True, "id": record_id, "status": rec.status}, status=status.HTTP_200_OK)
         except LiteratureRecord.DoesNotExist:
             return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ProjectListView(APIView):
+    """List all projects with per-project record statistics, or create a new project."""
+
+    def get(self, request):
+        projects = SearchProject.objects.all().order_by('-created_at')
+        result = []
+        for p in projects:
+            qs = LiteratureRecord.objects.filter(project=p)
+            total = qs.count()
+            result.append({
+                'id': p.id,
+                'name': p.name,
+                'description': p.description or '',
+                'created_at': p.created_at.isoformat(),
+                'updated_at': p.updated_at.isoformat(),
+                'stats': {
+                    'total': total,
+                    'dedup_rejected': qs.filter(status=LiteratureRecord.Status.DEDUP_REJECTED).count(),
+                    'rct_included': qs.filter(status__in=[
+                        LiteratureRecord.Status.RCT_INCLUDED,
+                        LiteratureRecord.Status.FULLTEXT_INCLUDED,
+                        LiteratureRecord.Status.FULLTEXT_EXCLUDED,
+                        LiteratureRecord.Status.EXTRACTED,
+                    ]).count(),
+                    'extracted': qs.filter(status=LiteratureRecord.Status.EXTRACTED).count(),
+                }
+            })
+        return Response({'projects': result}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        name = request.data.get('name', '').strip()
+        description = request.data.get('description', '').strip()
+        if not name:
+            return Response({"error": "Project name is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if SearchProject.objects.filter(name=name).exists():
+            return Response({"error": "A project with this name already exists"}, status=status.HTTP_400_BAD_REQUEST)
+        project = SearchProject.objects.create(name=name, description=description)
+        return Response({
+            'id': project.id,
+            'name': project.name,
+            'description': project.description,
+            'created_at': project.created_at.isoformat(),
+            'stats': {'total': 0, 'dedup_rejected': 0, 'rct_included': 0, 'extracted': 0}
+        }, status=status.HTTP_201_CREATED)
+
+
+class ProjectDetailView(APIView):
+    """Retrieve, update, or delete a single project."""
+
+    def get(self, request, pk):
+        try:
+            p = SearchProject.objects.get(pk=pk)
+        except SearchProject.DoesNotExist:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        qs = LiteratureRecord.objects.filter(project=p)
+        return Response({
+            'id': p.id, 'name': p.name, 'description': p.description or '',
+            'created_at': p.created_at.isoformat(),
+            'stats': {
+                'total': qs.count(),
+                'dedup_rejected': qs.filter(status=LiteratureRecord.Status.DEDUP_REJECTED).count(),
+                'rct_included': qs.filter(status__in=[
+                    LiteratureRecord.Status.RCT_INCLUDED,
+                    LiteratureRecord.Status.FULLTEXT_INCLUDED,
+                    LiteratureRecord.Status.FULLTEXT_EXCLUDED,
+                    LiteratureRecord.Status.EXTRACTED,
+                ]).count(),
+                'extracted': qs.filter(status=LiteratureRecord.Status.EXTRACTED).count(),
+            }
+        })
+
+    def patch(self, request, pk):
+        try:
+            p = SearchProject.objects.get(pk=pk)
+        except SearchProject.DoesNotExist:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        if 'name' in request.data:
+            p.name = request.data['name'].strip() or p.name
+        if 'description' in request.data:
+            p.description = request.data['description']
+        p.save()
+        return Response({'id': p.id, 'name': p.name, 'description': p.description})
+
+    def delete(self, request, pk):
+        try:
+            p = SearchProject.objects.get(pk=pk)
+        except SearchProject.DoesNotExist:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Prevent deleting the only remaining project
+        if SearchProject.objects.count() <= 1:
+            return Response({"error": "Cannot delete the last remaining project"}, status=status.HTTP_400_BAD_REQUEST)
+        name = p.name
+        p.delete()
+        return Response({"ok": True, "deleted": name}, status=status.HTTP_200_OK)

@@ -1,9 +1,10 @@
 from django.urls import path
-from .views import (FederatedSearchView, SaveRecordsView, DeduplicateRecordsView, 
+from .views import (FederatedSearchView, SaveRecordsView, DeduplicateRecordsView,
                     DashboardStatsView, ImportedRecordsView,
                     ScreeningPendingView, RctPredictView, RctDecisionView,
                     RctIncludedListView, PicoExtractView,
-                    FulltextEligibleListView, FulltextScreenView, FulltextDecisionView)
+                    FulltextEligibleListView, FulltextScreenView, FulltextDecisionView,
+                    ProjectListView, ProjectDetailView)
 
 urlpatterns = [
     path('federated_search/', FederatedSearchView.as_view(), name='federated_search'),
@@ -19,4 +20,6 @@ urlpatterns = [
     path('fulltext_eligible/', FulltextEligibleListView.as_view(), name='fulltext_eligible'),
     path('fulltext_screen/', FulltextScreenView.as_view(), name='fulltext_screen'),
     path('fulltext_decision/', FulltextDecisionView.as_view(), name='fulltext_decision'),
+    path('projects/', ProjectListView.as_view(), name='project_list'),
+    path('projects/<int:pk>/', ProjectDetailView.as_view(), name='project_detail'),
 ]
