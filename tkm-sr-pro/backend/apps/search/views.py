@@ -4,6 +4,7 @@ from rest_framework import status
 import os
 import requests as http_requests
 from .utils.api_clients import SearchManager
+from .utils.mesh_expander import MeSHExpander
 from .serializers.search_serializers import SearchQuerySerializer, LiteratureRecordSerializer
 from common.utils.deduplicator import HybridDeduplicator
 from .models import LiteratureRecord, SearchProject
@@ -14,13 +15,13 @@ class FederatedSearchView(APIView):
         if serializer.is_valid():
             query = serializer.validated_data['query']
             dbs = serializer.validated_data.get('dbs', ['PubMed'])
+            # 1. Expand the query using NCBI MeSH database
+            expander = MeSHExpander()
+            expanded_query = expander.expand_query(query)
             
+            # 2. Perform federated search with the expanded query
             manager = SearchManager()
-            results = manager.federated_search(query, dbs)
-            
-            # Here we might also expand the query using TKM Thesaurus
-            # (Stub for Phase 1 Thesaurus Expansion)
-            expanded_query = query + ' (expanded)'
+            results = manager.federated_search(expanded_query, dbs)
             
             return Response({
                 "query": query,

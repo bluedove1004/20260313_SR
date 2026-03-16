@@ -18,6 +18,7 @@ export default function SearchPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [results, setResults] = useState<any[]>([]);
+  const [expandedQuery, setExpandedQuery] = useState<string>('');
   const { currentProjectId } = useProjectStore();
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -31,6 +32,7 @@ export default function SearchPage() {
         dbs: selectedDBs,
       });
       setResults(response.data.results || []);
+      setExpandedQuery(response.data.expanded_query || '');
     } catch (error) {
       console.error('Search error:', error);
       alert('검색 중 오류가 발생했습니다.');
@@ -107,11 +109,11 @@ export default function SearchPage() {
                 {isSearching ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
               </button>
             </div>
-            {query && (
+            {expandedQuery && (
               <div className="text-sm text-green-700 bg-green-50 p-3 rounded-lg flex items-start gap-2 border border-green-100">
-                <span className="font-semibold whitespace-nowrap">✨ 시소러스 확장:</span>
+                <span className="font-semibold whitespace-nowrap">✨ MeSH 자동 확장:</span>
                 <span className="break-all font-mono text-xs">
-                  ("atopic dermatitis"[MeSH] OR "eczema" OR "초기 태열" OR "아토피 피부염") AND ("acupuncture"[MeSH] OR "electroacupuncture" OR "침술" OR "경혈")
+                  {expandedQuery}
                 </span>
               </div>
             )}
