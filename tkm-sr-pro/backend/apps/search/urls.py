@@ -4,7 +4,8 @@ from .views import (FederatedSearchView, SaveRecordsView, DeduplicateRecordsView
                     ScreeningPendingView, RctPredictView, RctDecisionView,
                     RctIncludedListView, PicoExtractView,
                     FulltextEligibleListView, FulltextScreenView, FulltextDecisionView,
-                    ProjectListView, ProjectDetailView)
+                    FetchFullTextView, UploadFullTextPDFView,
+                    ProjectListView, ProjectDetailView, ExportRctExcelView)
 
 urlpatterns = [
     path('federated_search/', FederatedSearchView.as_view(), name='federated_search'),
@@ -20,6 +21,9 @@ urlpatterns = [
     path('fulltext_eligible/', FulltextEligibleListView.as_view(), name='fulltext_eligible'),
     path('fulltext_screen/', FulltextScreenView.as_view(), name='fulltext_screen'),
     path('fulltext_decision/', FulltextDecisionView.as_view(), name='fulltext_decision'),
+    path('fetch_fulltext/', FetchFullTextView.as_view(), name='fetch_fulltext'),
+    path('upload_fulltext_pdf/', UploadFullTextPDFView.as_view(), name='upload_fulltext_pdf'),
     path('projects/', ProjectListView.as_view(), name='project_list'),
     path('projects/<int:pk>/', ProjectDetailView.as_view(), name='project_detail'),
+    path('export_excel/', ExportRctExcelView.as_view(), name='export_excel'),
 ]

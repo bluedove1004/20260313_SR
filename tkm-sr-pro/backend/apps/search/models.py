@@ -54,6 +54,8 @@ class LiteratureRecord(models.Model):
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.IMPORTED)
 
     # Full-text screening fields
+    full_text = models.TextField(blank=True, null=True)
+    pico_data = models.JSONField(blank=True, null=True)
     exclusion_reason = models.TextField(blank=True, null=True)
     reviewer_notes = models.TextField(blank=True, null=True)
 

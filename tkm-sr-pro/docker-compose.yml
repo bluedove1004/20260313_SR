@@ -74,6 +74,7 @@ services:
       - "80:80"
     depends_on:
       - backend
+      - ai_engine
 
 volumes:
   postgres_data:

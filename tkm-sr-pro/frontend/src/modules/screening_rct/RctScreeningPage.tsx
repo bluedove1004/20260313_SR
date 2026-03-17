@@ -10,6 +10,7 @@ interface LitRecord {
   authors: string;
   year: number;
   pmid: string;
+  source_db: string;
 }
 
 interface Prediction {
@@ -26,6 +27,7 @@ export default function RctScreeningPage() {
   const [predictions, setPredictions] = useState<Record<string, Prediction>>({});
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
   const [screeningCount, setScreeningCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<'high' | 'review'>('high');
   const { currentProjectId } = useProjectStore();
 
   const loadPendingRecords = useCallback(async () => {
@@ -143,6 +145,36 @@ export default function RctScreeningPage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('high')}
+          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${
+            activeTab === 'high' 
+            ? 'border-tkm-main text-tkm-main' 
+            : 'border-transparent text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          AI 강력 추천 (Confidence ≥ 90%)
+          <span className="ml-2 bg-tkm-light text-tkm-main px-2 py-0.5 rounded-full text-xs">
+            {records.filter(r => predictions[r.id]?.is_rct && predictions[r.id]?.confidence >= 0.9).length}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('review')}
+          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${
+            activeTab === 'review' 
+            ? 'border-tkm-main text-tkm-main' 
+            : 'border-transparent text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          정밀 검토 필요 (기타)
+          <span className="ml-2 bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full text-xs">
+            {records.length - records.filter(r => predictions[r.id]?.is_rct && predictions[r.id]?.confidence >= 0.9).length}
+          </span>
+        </button>
+      </div>
+
       {isLoadingRecords && records.length === 0 && (
         <div className="text-center py-16 text-gray-400">
           <Loader2 size={40} className="animate-spin mx-auto mb-4" />
@@ -159,7 +191,12 @@ export default function RctScreeningPage() {
       )}
 
       <div className="space-y-6">
-        {records.map((rec: LitRecord) => {
+        {records
+          .filter(r => {
+            const isHigh = (predictions[r.id]?.is_rct && predictions[r.id]?.confidence >= 0.9);
+            return activeTab === 'high' ? isHigh : !isHigh;
+          })
+          .map((rec: LitRecord) => {
           const pred = predictions[rec.id];
           if (!pred) return null;
           const isLoading = pred.status === 'loading';
@@ -174,6 +211,9 @@ export default function RctScreeningPage() {
                 <div className="flex-1 space-y-4 min-w-0">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
+                      <span className="px-2 py-0.5 bg-tkm-light text-tkm-main text-[10px] font-bold rounded uppercase">
+                        {rec.source_db || 'Unknown'}
+                      </span>
                       <h3 className="text-lg font-bold text-gray-900 leading-snug">{rec.title}</h3>
                     </div>
                     <p className="text-sm text-gray-500">{rec.authors} ({rec.year}) {rec.pmid && <span className="ml-2 font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">PMID: {rec.pmid}</span>}</p>

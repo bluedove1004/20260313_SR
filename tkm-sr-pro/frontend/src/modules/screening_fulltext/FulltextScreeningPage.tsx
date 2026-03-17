@@ -19,6 +19,7 @@ interface LitRecord {
   status: string;
   exclusion_reason: string | null;
   reviewer_notes: string | null;
+  full_text: string | null;
 }
 
 interface CriterionResult {
@@ -47,6 +48,7 @@ interface RecordState {
   decisionStatus: string; // current saved status
   notes: string;
   excludeReason: string;
+  isFetching: boolean;
 }
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -78,9 +80,10 @@ export default function FulltextScreeningPage() {
       recs.forEach(r => {
         init[r.id] = {
           screening: null, isScreening: false, isOpen: false,
-          fullText: '', decisionStatus: r.status,
+          fullText: r.full_text || '', decisionStatus: r.status,
           notes: r.reviewer_notes || '',
           excludeReason: r.exclusion_reason || '',
+          isFetching: false,
         };
       });
       setStates(init);
@@ -105,6 +108,20 @@ export default function FulltextScreeningPage() {
     } catch {
       setStates(prev => ({ ...prev, [rec.id]: { ...prev[rec.id], isScreening: false } }));
       alert('AI 선별 분석 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleFetchFullText = async (id: string) => {
+    setStates(prev => ({ ...prev, [id]: { ...prev[id], isFetching: true } }));
+    try {
+      const res = await apiClient.post('/search/fetch_fulltext/', { record_id: id });
+      if (res.data.ok) {
+        setStates(prev => ({ ...prev, [id]: { ...prev[id], fullText: res.data.full_text, isFetching: false } }));
+      }
+    } catch (e: any) {
+      const msg = e.response?.data?.error || '원문을 가져오는 데 실패했습니다 (Open Access 문헌이 아니거나 PMC에 없을 수 있습니다).';
+      alert(msg);
+      setStates(prev => ({ ...prev, [id]: { ...prev[id], isFetching: false } }));
     }
   };
 
@@ -206,15 +223,28 @@ export default function FulltextScreeningPage() {
                     <p className="text-sm text-gray-500 mt-0.5">{rec.authors}</p>
                   </div>
 
-                  {/* AI Screen Button */}
-                  <button
-                    onClick={() => handleAiScreen(rec)}
-                    disabled={st.isScreening}
-                    className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-tkm-main hover:bg-tkm-dark text-white rounded-xl font-bold text-sm transition-colors disabled:opacity-50"
-                  >
-                    {st.isScreening ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                    {st.isScreening ? 'AI 분석 중...' : 'AI 선별 기준 점검'}
-                  </button>
+                  {/* Action Buttons */}
+                  <div className="shrink-0 flex flex-col gap-2">
+                    <button
+                      onClick={() => handleAiScreen(rec)}
+                      disabled={st.isScreening}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-tkm-main hover:bg-tkm-dark text-white rounded-xl font-bold text-sm transition-colors disabled:opacity-50"
+                    >
+                      {st.isScreening ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                      {st.isScreening ? 'AI 분석 중...' : 'AI 선별 기준 점검'}
+                    </button>
+                    
+                    {(rec.pmid || rec.source_db === 'PubMed') && (
+                      <button
+                        onClick={() => handleFetchFullText(rec.id)}
+                        disabled={st.isFetching}
+                        className="flex items-center gap-2 px-4 py-2 bg-tkm-light text-tkm-main hover:bg-tkm-main hover:text-white border border-tkm-main/30 rounded-xl font-bold text-xs transition-colors disabled:opacity-50"
+                      >
+                        {st.isFetching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                        {st.isFetching ? '원문 가져오는 중...' : 'PMC 원문 자동 가져오기'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Abstract */}
@@ -230,9 +260,9 @@ export default function FulltextScreeningPage() {
                   <textarea
                     value={st.fullText}
                     onChange={e => setStates(prev => ({ ...prev, [rec.id]: { ...prev[rec.id], fullText: e.target.value } }))}
-                    rows={2}
-                    placeholder="원문 관련 텍스트를 이곳에 붙여넣으세요..."
-                    className="w-full text-xs font-mono border border-gray-200 rounded-lg p-2 resize-none focus:ring-2 focus:ring-tkm-main outline-none"
+                    rows={st.fullText ? 4 : 2}
+                    placeholder="원문 관련 텍스트를 이곳에 붙여넣거나 위 버튼으로 가져오세요..."
+                    className="w-full text-xs font-mono border border-gray-200 rounded-lg p-2 resize-none focus:ring-2 focus:ring-tkm-main outline-none transition-all"
                   />
                 </div>
               </div>

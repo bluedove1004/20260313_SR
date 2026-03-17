@@ -3,6 +3,10 @@ from rest_framework.response import Response
 from rest_framework import status
 import os
 import requests as http_requests
+import pdfplumber
+import openpyxl
+from openpyxl.styles import Font, Alignment, PatternFill
+from django.http import HttpResponse
 from .utils.api_clients import SearchManager
 from .utils.mesh_expander import MeSHExpander
 from .serializers.search_serializers import SearchQuerySerializer, LiteratureRecordSerializer
@@ -19,9 +23,9 @@ class FederatedSearchView(APIView):
             expander = MeSHExpander()
             expanded_query = expander.expand_query(query)
             
-            # 2. Perform federated search with the expanded query
+            # 2. Perform federated search with both original and expanded queries
             manager = SearchManager()
-            results = manager.federated_search(expanded_query, dbs)
+            results = manager.federated_search(query, expanded_query=expanded_query, dbs=dbs)
             
             return Response({
                 "query": query,
@@ -120,7 +124,7 @@ class ImportedRecordsView(APIView):
         qs = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.IMPORTED)
         if project_id:
             qs = qs.filter(project_id=project_id)
-        records = list(qs.values('id', 'title', 'authors', 'abstract', 'year', 'pmid', 'doi'))
+        records = list(qs.values('id', 'title', 'authors', 'abstract', 'year', 'pmid', 'doi', 'source_db'))
         return Response({"records": records}, status=status.HTTP_200_OK)
 
 class ScreeningPendingView(APIView):
@@ -130,7 +134,7 @@ class ScreeningPendingView(APIView):
         qs = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.SCREENING_PENDING)
         if project_id:
             qs = qs.filter(project_id=project_id)
-        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid'))
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'source_db'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class RctPredictView(APIView):
@@ -221,7 +225,7 @@ class RctIncludedListView(APIView):
         )
         if project_id:
             qs = qs.filter(project_id=project_id)
-        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status'))
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status', 'full_text', 'pico_data'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class PicoExtractView(APIView):
@@ -247,6 +251,7 @@ class PicoExtractView(APIView):
                 try:
                     rec = LiteratureRecord.objects.get(id=record_id)
                     rec.status = LiteratureRecord.Status.EXTRACTED
+                    rec.pico_data = pico_data  # Save the PICO JSON result
                     rec.save()
                     pico_data['record_id'] = record_id
                     pico_data['saved_to_db'] = True
@@ -272,8 +277,80 @@ class FulltextEligibleListView(APIView):
         if project_id:
             qs = qs.filter(project_id=project_id)
         records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid',
-                                 'doi', 'source_db', 'status', 'exclusion_reason', 'reviewer_notes'))
+                                 'doi', 'source_db', 'status', 'exclusion_reason', 'reviewer_notes', 'full_text'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
+
+class FetchFullTextView(APIView):
+    """Attempt to fetch full text from PMC for a given record."""
+    def post(self, request):
+        from .utils.fulltext_fetcher import FullTextFetcher
+        record_id = request.data.get('record_id')
+        try:
+            rec = LiteratureRecord.objects.get(id=record_id)
+            if not rec.pmid:
+                return Response({"error": "No PMID available for this record"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            fetcher = FullTextFetcher()
+            text = fetcher.auto_fetch(rec.pmid)
+            
+            if text:
+                rec.full_text = text
+                rec.save()
+                return Response({"ok": True, "full_text": text}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "Full text not found or not Open Access in PMC"}, status=status.HTTP_404_NOT_FOUND)
+        except LiteratureRecord.DoesNotExist:
+            return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class UploadFullTextPDFView(APIView):
+    """Handle PDF upload and extract text for a record."""
+    def post(self, request):
+        record_id = request.data.get('record_id')
+        pdf_file = request.FILES.get('pdf_file')
+
+        if not record_id or not pdf_file:
+            return Response({"error": "Missing record_id or pdf_file"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rec = LiteratureRecord.objects.get(id=record_id)
+            
+            # Extract text from PDF
+            extracted_text = ""
+            with pdfplumber.open(pdf_file) as pdf:
+                for page in pdf.pages:
+                    # Get page dimensions
+                    width = page.width
+                    height = page.height
+                    
+                    # Define regions for 2-column layout (Left side vs Right side)
+                    left_bbox = (0, 0, width / 2, height)
+                    right_bbox = (width / 2, 0, width, height)
+                    
+                    left_crop = page.within_bbox(left_bbox)
+                    right_crop = page.within_bbox(right_bbox)
+                    
+                    # Extract text from left then right to preserve reading order
+                    left_text = left_crop.extract_text()
+                    right_text = right_crop.extract_text()
+                    
+                    if left_text:
+                        extracted_text += left_text + "\n"
+                    if right_text:
+                        extracted_text += right_text + "\n"
+                    
+                    extracted_text += "\n" # Page break
+            
+            if not extracted_text.strip():
+                return Response({"error": "Could not extract text from PDF"}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            
+            rec.full_text = extracted_text
+            rec.save()
+            return Response({"ok": True, "full_text": extracted_text}, status=status.HTTP_200_OK)
+
+        except LiteratureRecord.DoesNotExist:
+            return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class FulltextScreenView(APIView):
     """Proxy text to AI engine for eligibility screening. Does NOT save to DB."""
@@ -310,6 +387,9 @@ class FulltextDecisionView(APIView):
                           else LiteratureRecord.Status.FULLTEXT_EXCLUDED)
             rec.exclusion_reason = exclusion_reason if decision == 'exclude' else None
             rec.reviewer_notes = reviewer_notes
+            # Also save manual full-text if provided
+            if request.data.get('full_text'):
+                rec.full_text = request.data.get('full_text')
             rec.save()
             return Response({"ok": True, "id": record_id, "status": rec.status}, status=status.HTTP_200_OK)
         except LiteratureRecord.DoesNotExist:
@@ -410,3 +490,88 @@ class ProjectDetailView(APIView):
         name = p.name
         p.delete()
         return Response({"ok": True, "deleted": name}, status=status.HTTP_200_OK)
+
+class ExportRctExcelView(APIView):
+    """Generate Excel file for RCT included records including PICO data."""
+    def get(self, request):
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
+            status__in=[
+                LiteratureRecord.Status.RCT_INCLUDED,
+                LiteratureRecord.Status.FULLTEXT_INCLUDED,
+                LiteratureRecord.Status.EXTRACTED
+            ]
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        
+        # Create Workbook
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "RCT_Included_Records"
+
+        # Headers
+        headers = [
+            "ID", "Source DB", "Year", "Journal", "Authors", "Title", "PMID", "DOI", "Status",
+            "P-Population (Diagnosis)", "P-Sample Size", "P-Age Range",
+            "I-Intervention (Name)", "I-Frequency", "I-Duration",
+            "C-Comparison", "O-Primary Outcome", "O-Scales",
+            "Design", "Blinding", "Allocation",
+            "P-values", "Effect Sizes", "Confidence"
+        ]
+        
+        # Styling for header
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        # Data Rows
+        for row_num, rec in enumerate(qs, 2):
+            pico = rec.pico_data or {}
+            
+            # Extract nested PICO values safely
+            pop = pico.get('population', {})
+            intv = pico.get('intervention', {})
+            comp = pico.get('comparison', {})
+            out = pico.get('outcome', {})
+            design = pico.get('study_design', {})
+            stats = pico.get('statistical_summary', {})
+            
+            data = [
+                rec.id, rec.source_db, rec.year, rec.journal, rec.authors, rec.title, rec.pmid, rec.doi, rec.status,
+                pop.get('diagnosis'), pop.get('sample_size'), pop.get('age_range'),
+                intv.get('name'), intv.get('frequency'), intv.get('duration'),
+                comp.get('type'), out.get('primary_outcome'), ", ".join(out.get('measurement_scales', [])),
+                design.get('design_type'), design.get('blinding'), design.get('allocation'),
+                ", ".join(stats.get('p_values', [])), ", ".join(stats.get('effect_sizes', [])),
+                pico.get('extraction_confidence')
+            ]
+            
+            for col_num, value in enumerate(data, 1):
+                ws.cell(row=row_num, column=col_num, value=str(value) if value is not None else "")
+
+        # Column Adjustments
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column].width = adjusted_width
+
+        # Response
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename=RCT_Extraction_List.xlsx'
+        wb.save(response)
+        return response

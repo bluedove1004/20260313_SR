@@ -1,94 +1,25 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import List, Optional
 import re
 
-app = FastAPI(title="TKM-SR Pro AI Engine API", version="0.1.0")
-
-class InferenceRequest(BaseModel):
-    title: str
-    abstract: str
-    keywords: str
-
-class RCTPrediction(BaseModel):
-    is_rct: bool
-    confidence: float
-    exclusion_reason: Optional[str] = None
-    explanation: str
-    highlighted_sentences: List[str]
+app = FastAPI()
 
 class PicoExtractionRequest(BaseModel):
+    record_id: Optional[str] = None
     title: str
     abstract: str
     full_text: Optional[str] = ""
 
 class PicoResult(BaseModel):
-    population: Dict[str, Any]
-    intervention: Dict[str, Any]
-    comparison: Dict[str, Any]
-    outcome: Dict[str, Any]
-    study_design: Dict[str, Any]
-    statistical_summary: Dict[str, Any]
+    population: dict
+    intervention: dict
+    comparison: dict
+    outcome: dict
+    study_design: dict
+    statistical_summary: dict
     extraction_confidence: float
     raw_evidence: List[str]
-
-nlp_classifier = None
-
-@app.on_event("startup")
-def load_model():
-    global nlp_classifier
-    print("Loading AI models (Phase 1: Lexicon + Regex pipeline)...")
-    nlp_classifier = "Loaded"
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "service": "tkm_ai_engine"}
-
-@app.post("/api/v1/ai/predict_rct", response_model=RCTPrediction)
-def predict_rct(req: InferenceRequest):
-    text = f"{req.title}. {req.abstract} {req.keywords}".lower()
-    rct_keywords = [
-        "randomized controlled trial", "randomised controlled trial",
-        "randomly assigned", "무작위배정", "무작위 대조군",
-        "rct", "double-blind", "randomized"
-    ]
-    exclusion_keywords = [
-        "case report", "review", "meta-analysis", "rat", "mice",
-        "in vitro", "증례보고", "동물실험", "vivo"
-    ]
-    sentences = re.split(r'(?<=[.!?]) +', req.abstract)
-    highlights = []
-    is_rct = False
-    confidence = 0.5
-    exclusion_reason = None
-    for kw in exclusion_keywords:
-        if kw in text:
-            return RCTPrediction(
-                is_rct=False, confidence=0.95,
-                exclusion_reason="Study Design (Review/Animal/Case)",
-                explanation=f"Excluded due to finding exclusion keyword: '{kw}'",
-                highlighted_sentences=[kw]
-            )
-    for kw in rct_keywords:
-        if kw in text:
-            is_rct = True
-            confidence = 0.96
-            for s in sentences:
-                if kw in s.lower() and s not in highlights:
-                    highlights.append(s)
-    if is_rct:
-        explanation = "Detected strong RCT characteristics in abstract based on Lexicon/BERT features."
-    else:
-        is_rct = False
-        confidence = 0.85
-        exclusion_reason = "Study Design (Non-RCT)"
-        explanation = "No RCT characteristics detected in text. Likely observational or non-randomized."
-    return RCTPrediction(
-        is_rct=is_rct, confidence=confidence,
-        exclusion_reason=exclusion_reason,
-        explanation=explanation,
-        highlighted_sentences=highlights
-    )
 
 @app.post("/api/v1/ai/extract_pico", response_model=PicoResult)
 def extract_pico(req: PicoExtractionRequest):
@@ -96,9 +27,34 @@ def extract_pico(req: PicoExtractionRequest):
     Phase 1: Regex + Lexicon-based PICO extraction from abstract / full-text.
     Phase 2+: Replace with fine-tuned BioBERT/KM-BERT NER model.
     """
-    text = f"{req.title}. {req.abstract} {req.full_text or ''}".strip()
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+    title_txt = req.title or ""
+    abstract_txt = req.abstract or ""
+    full_txt = req.full_text or ""
+
+    abs_sentences = re.split(r'(?<=[.!?])\s+', f"{title_txt}. {abstract_txt}")
+    full_sentences = re.split(r'(?<=[.!?])\s+', full_txt)
+    
+    # Combined with source info
+    all_sentences = []
+    for s in abs_sentences:
+        if s.strip(): all_sentences.append({"txt": s.strip(), "src": "Abstract"})
+    for s in full_sentences:
+        if s.strip(): all_sentences.append({"txt": s.strip(), "src": "Full-text"})
+
+    text = f"{title_txt}. {abstract_txt} {full_txt}".strip()
     evidence = []
+
+    def get_match_sentence(keywords):
+        for s in all_sentences:
+            if any(w in s["txt"].lower() for w in keywords):
+                return s
+        return None
+
+    def add_evidence(label, s_data):
+        if s_data:
+            evidence.append(f"[{label}] [{s_data['src']}] {s_data['txt'][:2000]}")
+            return True
+        return False
 
     # ── Population ───────────────────────────────────────────────
     n_match = re.search(r'\b(?:n\s*=\s*|total\s+of\s+|enrolled\s+|participants?[\s:]+|patients?[\s:]+|subjects?[\s:]+)(\d{2,5})\b', text, re.I)
@@ -119,37 +75,29 @@ def extract_pico(req: PicoExtractionRequest):
     age_match = re.search(r'(?:aged?|age\s+range?|mean\s+age)[:\s]+(\d{1,3}(?:\.\d)?(?:\s*[-–]\s*\d{1,3})?(?:\s*years?)?)', text, re.I)
     age_str = age_match.group(1).strip() if age_match else None
 
-    pop_sentences = [s for s in sentences if any(w in s.lower() for w in ['patient', 'participant', 'subject', 'enrolled', 'n =', 'aged'])]
-    if pop_sentences:
-        evidence.append(f"[Population] {pop_sentences[0][:200]}")
+    pop_s = get_match_sentence(['patient', 'participant', 'subject', 'enrolled', 'n =', 'aged'])
+    add_evidence("Population", pop_s)
 
     # ── Intervention ─────────────────────────────────────────────
-    tkm_herbs = [
-        'xiaoyao', 'liuwei', 'buzhong', 'huangqi', 'danshen', 'gegen',
-        'acupuncture', 'moxibustion', 'cupping', 'herbal', 'traditional chinese medicine',
-        'tcm', 'korean medicine', 'kampo', '소요산', '육미지황', '침', '뜸',
-        'electroacupuncture', 'auricular', 'tuina'
-    ]
+    tkm_herbs = ['xiaoyao', 'liuwei', 'buzhong', 'huangqi', 'danshen', 'gegen', 'acupuncture', 'moxibustion', 'cupping', 'herbal', 'traditional chinese medicine', 'tcm', 'korean medicine', 'kampo', '소요산', '육미지황', '침', '뜸', 'electroacupuncture', 'auricular', 'tuina']
     freq_match = re.search(r'(\d+)\s*(?:times?|sessions?|treatments?)\s*(?:per|a|each)?\s*(week|day|month)', text, re.I)
     duration_match = re.search(r'for\s+(\d+\s*(?:weeks?|months?|days?))', text, re.I)
-
+    
     intervention_name = None
     for herb in tkm_herbs:
         if herb.lower() in text.lower():
             intervention_name = herb.title()
             break
-
-    int_sentences = [s for s in sentences if any(w in s.lower() for w in ['treatment', 'intervention', 'administered', 'received', 'acupuncture', 'herbal'])]
-    if int_sentences:
-        evidence.append(f"[Intervention] {int_sentences[0][:200]}")
+    
+    int_s = get_match_sentence(['treatment', 'intervention', 'administered', 'received', 'acupuncture', 'herbal', 'group'])
+    add_evidence("Intervention", int_s)
 
     # ── Comparison ───────────────────────────────────────────────
     ctrl_match = re.search(r'(?:control\s+group?|placebo|sham|waiting\s+list|usual\s+care|standard\s+(?:care|treatment))', text, re.I)
     comparison_type = ctrl_match.group(0).strip().title() if ctrl_match else None
 
-    comp_sentences = [s for s in sentences if any(w in s.lower() for w in ['placebo', 'control', 'sham', 'comparison', 'versus', 'vs.', 'compared'])]
-    if comp_sentences:
-        evidence.append(f"[Comparison] {comp_sentences[0][:200]}")
+    comp_s = get_match_sentence(['placebo', 'control', 'sham', 'comparison', 'versus', 'vs.', 'compared'])
+    add_evidence("Comparison", comp_s)
 
     # ── Outcome ──────────────────────────────────────────────────
     outcome_patterns = [
@@ -167,9 +115,8 @@ def extract_pico(req: PicoExtractionRequest):
     scale_match = re.findall(r'\b([A-Z]{2,8}(?:\s*-\s*\d+)?)\b', text)
     scales = list(set([s for s in scale_match if len(s) >= 3 and s.isupper()]))[:5]
 
-    out_sentences = [s for s in sentences if any(w in s.lower() for w in ['outcome', 'endpoint', 'score', 'assessed', 'measured', 'scale'])]
-    if out_sentences:
-        evidence.append(f"[Outcome] {out_sentences[0][:200]}")
+    out_s = get_match_sentence(['outcome', 'endpoint', 'score', 'assessed', 'measured', 'scale'])
+    add_evidence("Outcome", out_s)
 
     # ── Study Design ─────────────────────────────────────────────
     blind_match = re.search(r'(double[\s-]blind|single[\s-]blind|triple[\s-]blind|open[\s-]label)', text, re.I)
@@ -181,9 +128,8 @@ def extract_pico(req: PicoExtractionRequest):
     ci_values = re.findall(r'(?:95%?\s+CI|confidence\s+interval)[:\s]*\[?([\d.\s,–-]+)\]?', text, re.I)
     effect_sizes = re.findall(r'(?:SMD|MD|OR|RR|HR|ES|Cohen\'?s?\s+d)[:\s=]?\s*([-\d.]+)', text)
 
-    stat_sentences = [s for s in sentences if any(w in s.lower() for w in ['significant', 'p <', 'p=', 'confidence', 'mean difference', 'odds ratio'])]
-    if stat_sentences:
-        evidence.append(f"[Statistics] {stat_sentences[0][:200]}")
+    stat_s = get_match_sentence(['significant', 'p <', 'p=', 'confidence', 'mean difference', 'odds ratio'])
+    add_evidence("Statistics", stat_s)
 
     # ── Confidence scoring ────────────────────────────────────────
     filled_fields = sum([
@@ -197,22 +143,22 @@ def extract_pico(req: PicoExtractionRequest):
             "sample_size": sample_size,
             "diagnosis": diagnosis,
             "age_range": age_str,
-            "extracted_from": pop_sentences[0][:120] if pop_sentences else None
+            "extracted_from": pop_s["txt"][:120] if pop_s else None
         },
         intervention={
             "name": intervention_name,
             "frequency": freq_match.group(0) if freq_match else None,
             "duration": duration_match.group(1) if duration_match else None,
-            "extracted_from": int_sentences[0][:120] if int_sentences else None
+            "extracted_from": int_s["txt"][:120] if int_s else None
         },
         comparison={
             "type": comparison_type,
-            "extracted_from": comp_sentences[0][:120] if comp_sentences else None
+            "extracted_from": comp_s["txt"][:120] if comp_s else None
         },
         outcome={
             "primary_outcome": primary_outcome,
             "measurement_scales": scales,
-            "extracted_from": out_sentences[0][:120] if out_sentences else None
+            "extracted_from": out_s["txt"][:120] if out_s else None
         },
         study_design={
             "blinding": blind_match.group(1) if blind_match else None,
@@ -302,7 +248,11 @@ def screen_fulltext(req: FulltextScreenRequest):
     
     for criterion in criteria_to_check:
         keywords = keyword_map.get(criterion.id, [])
-        matched_keywords = [kw for kw in keywords if kw.lower() in text]
+        matched_keywords = []
+        for kw in keywords:
+            pattern = r'\b' + re.escape(kw) + r'\b'
+            if re.search(pattern, text, re.I):
+                matched_keywords.append(kw)
         
         if criterion.type == "inclusion":
             met = len(matched_keywords) > 0
