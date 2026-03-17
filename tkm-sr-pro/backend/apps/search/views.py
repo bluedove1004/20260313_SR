@@ -2,6 +2,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import os
+import json
+import openai
 import requests as http_requests
 import pdfplumber
 import openpyxl
@@ -263,6 +265,95 @@ class PicoExtractView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+class PicoExtractGptView(APIView):
+    """
+    Enhanced PICO extraction using ChatGPT (GPT-4o) with user-provided API key.
+    """
+    def post(self, request):
+        api_key = request.data.get('api_key')
+        record_id = request.data.get('record_id')
+        title = request.data.get('title', '')
+        abstract = request.data.get('abstract', '')
+        full_text = request.data.get('full_text', '')
+
+        if not api_key:
+            return Response({"error": "OpenAI API Key가 필요합니다. 설정 메뉴에서 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Prepare context (limiting text content for GPT context window while keeping relevant info)
+        text_content = f"Title: {title}\nAbstract: {abstract}\n\nFull Text Snippet:\n{full_text[:15000]}"
+        
+        prompt = f"""
+        Extract PICO (Population, Intervention, Comparison, Outcome) and Study Design information from the following medical literature text.
+        Return the result in JSON format ONLY, matching the following structure strictly:
+        {{
+          "population": {{ "sample_size": number or null, "diagnosis": "string", "age_range": "string", "extracted_from": "specific sentence" }},
+          "intervention": {{ "name": "string", "frequency": "string", "duration": "string", "extracted_from": "specific sentence" }},
+          "comparison": {{ "type": "string", "extracted_from": "specific sentence" }},
+          "outcome": {{ "primary_outcome": "string", "measurement_scales": ["string"], "extracted_from": "specific sentence" }},
+          "study_design": {{ "blinding": "string", "allocation": "string", "design_type": "string" }},
+          "statistical_summary": {{ "p_values": ["string"], "confidence_intervals": ["string"], "effect_sizes": ["string"] }},
+          "extraction_confidence": number (0-1),
+          "raw_evidence": ["list of key sentences supporting the extraction"]
+        }}
+        
+        Rules:
+        1. If information is missing, use null or empty string/array as appropriate.
+        2. Ensure 'extracted_from' contains the exact sentence from the text if possible.
+        3. 'raw_evidence' should be a list of 5-10 key sentences that provide context.
+        
+        Text to analyze:
+        {text_content}
+        """
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            data = {
+                "model": "gpt-4o",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "You are a highly skilled medical informatics expert specialized in systematic reviews and PICO data extraction for medical literature."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": { "type": "json_object" },
+                "temperature": 0.1
+            }
+
+            response = http_requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=60
+            )
+            
+            if response.status_code != 200:
+                error_info = response.json().get("error", {}).get("message", "Unknown error")
+                return Response({"error": f"OpenAI API 오류: {error_info}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            pico_json_str = response.json()["choices"][0]["message"]["content"]
+            pico_data = json.loads(pico_json_str)
+
+            # Update DB if record_id provided
+            if record_id:
+                try:
+                    rec = LiteratureRecord.objects.get(id=record_id)
+                    rec.status = LiteratureRecord.Status.EXTRACTED
+                    rec.pico_data = pico_data
+                    rec.save()
+                    pico_data['record_id'] = record_id
+                    pico_data['saved_to_db'] = True
+                except LiteratureRecord.DoesNotExist:
+                    pico_data['saved_to_db'] = False
+
+            return Response(pico_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": f"ChatGPT 연동 오류: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class FulltextEligibleListView(APIView):
     """Return RCT_INCLUDED records waiting for full-text eligibility screening."""
     def get(self, request):
@@ -277,7 +368,7 @@ class FulltextEligibleListView(APIView):
         if project_id:
             qs = qs.filter(project_id=project_id)
         records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid',
-                                 'doi', 'source_db', 'status', 'exclusion_reason', 'reviewer_notes', 'full_text'))
+                                 'doi', 'source_db', 'status', 'exclusion_reason', 'reviewer_notes', 'full_text', 'pico_data'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class FetchFullTextView(APIView):
@@ -419,8 +510,12 @@ class ProjectListView(APIView):
                         LiteratureRecord.Status.FULLTEXT_INCLUDED,
                         LiteratureRecord.Status.FULLTEXT_EXCLUDED,
                         LiteratureRecord.Status.EXTRACTED,
+                        LiteratureRecord.Status.ROB_COMPLETED,
                     ]).count(),
-                    'extracted': qs.filter(status=LiteratureRecord.Status.EXTRACTED).count(),
+                    'extracted': qs.filter(status__in=[
+                        LiteratureRecord.Status.EXTRACTED,
+                        LiteratureRecord.Status.ROB_COMPLETED,
+                    ]).count(),
                 }
             })
         return Response({'projects': result}, status=status.HTTP_200_OK)
@@ -573,5 +668,202 @@ class ExportRctExcelView(APIView):
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
         response['Content-Disposition'] = f'attachment; filename=RCT_Extraction_List.xlsx'
+        wb.save(response)
+        return response
+
+class ExportRctScreeningExcelView(APIView):
+    """Excel export for RCT Screening page."""
+    def get(self, request):
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(status=LiteratureRecord.Status.SCREENING_PENDING)
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "RCT_Screening_Pending"
+        
+        headers = ["ID", "Source DB", "Year", "Journal", "Authors", "Title", "PMID", "DOI", "Status"]
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        for row_num, rec in enumerate(qs, 2):
+            data = [rec.id, rec.source_db, rec.year, rec.journal, rec.authors, rec.title, rec.pmid, rec.doi, rec.status]
+            for col_num, value in enumerate(data, 1):
+                ws.cell(row=row_num, column=col_num, value=str(value) if value is not None else "")
+        
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except: pass
+            ws.column_dimensions[column].width = min(max_length + 2, 60)
+
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename=RCT_Screening_List.xlsx'
+        wb.save(response)
+        return response
+
+class ExportFulltextScreeningExcelView(APIView):
+    """Excel export for Full-text Screening page."""
+    def get(self, request):
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
+            status__in=[
+                LiteratureRecord.Status.RCT_INCLUDED,
+                LiteratureRecord.Status.FULLTEXT_INCLUDED,
+                LiteratureRecord.Status.FULLTEXT_EXCLUDED
+            ]
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+            
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Fulltext_Screening"
+        
+        headers = ["ID", "Source DB", "Year", "Journal", "Authors", "Title", "PMID", "DOI", "Status", "Exclusion Reason", "Reviewer Notes"]
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        for row_num, rec in enumerate(qs, 2):
+            data = [
+                rec.id, rec.source_db, rec.year, rec.journal, rec.authors, rec.title, rec.pmid, rec.doi, rec.status,
+                rec.exclusion_reason or "", rec.reviewer_notes or ""
+            ]
+            for col_num, value in enumerate(data, 1):
+                ws.cell(row=row_num, column=col_num, value=str(value) if value is not None else "")
+
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except: pass
+            ws.column_dimensions[column].width = min(max_length + 2, 60)
+
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename=Fulltext_Screening_List.xlsx'
+        wb.save(response)
+        return response
+
+class RobAssessmentListView(APIView):
+    """Return records that have completed PICO extraction, ready for ROB assessment."""
+    def get(self, request):
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
+            status__in=[
+                LiteratureRecord.Status.EXTRACTED,
+                LiteratureRecord.Status.ROB_COMPLETED
+            ]
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status', 'full_text', 'pico_data', 'rob_data'))
+        return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
+
+class RobSaveView(APIView):
+    """Save ROB assessment data for a record."""
+    def post(self, request):
+        record_id = request.data.get('record_id')
+        rob_data = request.data.get('rob_data')
+        if not record_id or rob_data is None:
+            return Response({"error": "Missing record_id or rob_data"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            rec = LiteratureRecord.objects.get(id=record_id)
+            rec.rob_data = rob_data
+            rec.status = LiteratureRecord.Status.ROB_COMPLETED
+            rec.save()
+            return Response({"ok": True, "id": record_id}, status=status.HTTP_200_OK)
+        except LiteratureRecord.DoesNotExist:
+            return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class ExportRobExcelView(APIView):
+    """Excel export for ROB Assessment results."""
+    def get(self, request):
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
+            status__in=[
+                LiteratureRecord.Status.EXTRACTED,
+                LiteratureRecord.Status.ROB_COMPLETED
+            ]
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+            
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "ROB_Assessment"
+        
+        # Base headers
+        headers = ["ID", "Source DB", "Year", "Journal", "Authors", "Title", "PMID", "DOI", "Status"]
+        
+        # ROB Domain headers (7 domains)
+        domains = [
+            ('d1', 'Random sequence generation'),
+            ('d2', 'Allocation concealment'),
+            ('d3', 'Blinding of participants and personnel'),
+            ('d4', 'Blinding of outcome assessment'),
+            ('d5', 'Incomplete outcome data'),
+            ('d6', 'Selective reporting'),
+            ('d7', 'Other bias'),
+        ]
+        
+        for _, name in domains:
+            headers.append(f"{name} (Risk)")
+            headers.append(f"{name} (Comment)")
+            
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        for row_num, rec in enumerate(qs.order_by('id'), 2):
+            row_data = [
+                rec.id, rec.source_db, rec.year, rec.journal, rec.authors, rec.title, rec.pmid, rec.doi, rec.status
+            ]
+            
+            rob = rec.rob_data or {}
+            for dom_id, _ in domains:
+                d_val = rob.get(dom_id, {})
+                row_data.append(d_val.get('decision', ''))
+                row_data.append(d_val.get('comment', ''))
+            
+            for col_num, value in enumerate(row_data, 1):
+                ws.cell(row=row_num, column=col_num, value=str(value) if value is not None else "")
+
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except: pass
+            ws.column_dimensions[column].width = min(max_length + 2, 50)
+
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename=ROB_Assessment_Results.xlsx'
         wb.save(response)
         return response

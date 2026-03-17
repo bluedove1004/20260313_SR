@@ -2,10 +2,12 @@ from django.urls import path
 from .views import (FederatedSearchView, SaveRecordsView, DeduplicateRecordsView,
                     DashboardStatsView, ImportedRecordsView,
                     ScreeningPendingView, RctPredictView, RctDecisionView,
-                    RctIncludedListView, PicoExtractView,
+                    RctIncludedListView, PicoExtractView, PicoExtractGptView,
                     FulltextEligibleListView, FulltextScreenView, FulltextDecisionView,
                     FetchFullTextView, UploadFullTextPDFView,
-                    ProjectListView, ProjectDetailView, ExportRctExcelView)
+                    ProjectListView, ProjectDetailView, ExportRctExcelView,
+                    ExportRctScreeningExcelView, ExportFulltextScreeningExcelView,
+                    RobAssessmentListView, RobSaveView, ExportRobExcelView)
 
 urlpatterns = [
     path('federated_search/', FederatedSearchView.as_view(), name='federated_search'),
@@ -18,6 +20,7 @@ urlpatterns = [
     path('rct_decision/', RctDecisionView.as_view(), name='rct_decision'),
     path('rct_included/', RctIncludedListView.as_view(), name='rct_included'),
     path('pico_extract/', PicoExtractView.as_view(), name='pico_extract'),
+    path('pico_extract_gpt/', PicoExtractGptView.as_view(), name='pico_extract_gpt'),
     path('fulltext_eligible/', FulltextEligibleListView.as_view(), name='fulltext_eligible'),
     path('fulltext_screen/', FulltextScreenView.as_view(), name='fulltext_screen'),
     path('fulltext_decision/', FulltextDecisionView.as_view(), name='fulltext_decision'),
@@ -26,4 +29,9 @@ urlpatterns = [
     path('projects/', ProjectListView.as_view(), name='project_list'),
     path('projects/<int:pk>/', ProjectDetailView.as_view(), name='project_detail'),
     path('export_excel/', ExportRctExcelView.as_view(), name='export_excel'),
+    path('export_rct_screening/', ExportRctScreeningExcelView.as_view(), name='export_rct_screening'),
+    path('export_fulltext_screening/', ExportFulltextScreeningExcelView.as_view(), name='export_fulltext_screening'),
+    path('rob_list/', RobAssessmentListView.as_view(), name='rob_list'),
+    path('rob_save/', RobSaveView.as_view(), name='rob_save'),
+    path('export_rob/', ExportRobExcelView.as_view(), name='export_rob'),
 ]

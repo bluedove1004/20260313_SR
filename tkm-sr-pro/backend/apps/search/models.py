@@ -51,11 +51,13 @@ class LiteratureRecord(models.Model):
         FULLTEXT_INCLUDED = 'FULLTEXT_INCLUDED', _('Included (Full-text)')
         FULLTEXT_EXCLUDED = 'FULLTEXT_EXCLUDED', _('Excluded (Full-text)')
         EXTRACTED = 'EXTRACTED', _('PICO Extracted')
+        ROB_COMPLETED = 'ROB_COMPLETED', _('ROB Assessment Completed')
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.IMPORTED)
 
     # Full-text screening fields
     full_text = models.TextField(blank=True, null=True)
     pico_data = models.JSONField(blank=True, null=True)
+    rob_data = models.JSONField(blank=True, null=True)
     exclusion_reason = models.TextField(blank=True, null=True)
     reviewer_notes = models.TextField(blank=True, null=True)
 

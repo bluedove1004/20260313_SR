@@ -21,6 +21,18 @@ class PicoResult(BaseModel):
     extraction_confidence: float
     raw_evidence: List[str]
 
+class RctPredictionRequest(BaseModel):
+    title: str
+    abstract: str
+    keywords: Optional[str] = ""
+
+class RctPredictionResult(BaseModel):
+    is_rct: bool
+    confidence: float
+    explanation: str
+    highlighted_sentences: List[str]
+    exclusion_reason: Optional[str] = None
+
 @app.post("/api/v1/ai/extract_pico", response_model=PicoResult)
 def extract_pico(req: PicoExtractionRequest):
     """
@@ -172,6 +184,90 @@ def extract_pico(req: PicoExtractionRequest):
         },
         extraction_confidence=confidence,
         raw_evidence=evidence
+    )
+
+@app.post("/api/v1/ai/predict_rct", response_model=RctPredictionResult)
+def predict_rct(req: RctPredictionRequest):
+    """
+    Phase 1: Rule-based RCT prediction.
+    Checks for keywords like 'randomized', 'controlled trial', etc.
+    Excludes animal studies and non-RCT designs.
+    """
+    title_txt = req.title or ""
+    abstract_txt = req.abstract or ""
+    text = f"{title_txt}. {abstract_txt}".lower()
+    
+    # 1. Inclusion Keywords (RCT indicators)
+    rct_keywords = [
+        "randomized", "randomised", "randomly assigned", "randomly allocated",
+        "controlled trial", "double-blind", "sham-controlled", "placebo-controlled",
+        "무작위", "대조군", "임상시험"
+    ]
+    
+    # 2. Exclusion Keywords (Non-RCT or animal)
+    exclusion_keywords = [
+        "rat", "mice", "mouse", "cell line", "in vitro", "animal model",
+        "systematic review", "meta-analysis", "case report", "case series",
+        "observational study", "cohort study", "retrospective study",
+        "체계적 고찰", "메타분석", "증례보고"
+    ]
+    
+    
+    def find_matches(keywords, target):
+        found = []
+        for kw in keywords:
+            if re.search(r'[a-zA-Z]', kw):
+                # Use word boundaries for English terms to avoid 'rat' in 'literature'
+                if re.search(r'\b' + re.escape(kw) + r'\b', target, re.I):
+                    found.append(kw)
+            else:
+                if kw in target:
+                    found.append(kw)
+        return found
+
+    found_rct = find_matches(rct_keywords, text)
+    found_exclude = find_matches(exclusion_keywords, text)
+    
+    is_rct = len(found_rct) > 0 and len(found_exclude) == 0
+    
+    # Simple scoring
+    score = 0.5
+    if is_rct:
+        # Increase confidence with more RCT terms
+        score = min(0.7 + (len(found_rct) * 0.08), 0.98)
+    elif len(found_exclude) > 0:
+        score = min(0.85 + (len(found_exclude) * 0.05), 0.99)
+        is_rct = False
+    else:
+        # Uncertain
+        score = 0.5
+    
+    # Highlight logic: split into sentences and find those with keywords
+    sentences = re.split(r'(?<=[.!?])\s+', f"{title_txt}. {abstract_txt}")
+    highlights = []
+    for s in sentences:
+        if find_matches(rct_keywords + exclusion_keywords, s.lower()):
+            highlights.append(s.strip())
+            if len(highlights) >= 4: break
+            
+    # Explanation
+    if is_rct:
+        explanation = f"무작위 대조군 연구(RCT) 가능성이 매우 높습니다. 검출된 키워드: {', '.join(found_rct[:3])}"
+    elif len(found_exclude) > 0:
+        explanation = f"배제 키워드({', '.join(found_exclude[:2])})가 발견되어 RCT가 아닐 확률이 높습니다."
+    else:
+        explanation = "RCT 증거가 불충분합니다. 초록 내용을 정밀 검토해 주세요."
+        
+    reason = None
+    if len(found_exclude) > 0:
+        reason = f"배제 사유 후보: {found_exclude[0].title()}"
+        
+    return RctPredictionResult(
+        is_rct=is_rct,
+        confidence=score,
+        explanation=explanation,
+        highlighted_sentences=highlights,
+        exclusion_reason=reason
     )
 
 

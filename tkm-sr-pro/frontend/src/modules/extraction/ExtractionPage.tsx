@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Database, FileText, Activity, Loader2, ChevronDown, ChevronUp, Sparkles, CheckCircle2, RefreshCw, User, Zap, BarChart2, ClipboardList, Upload, Maximize2, X } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useProjectStore } from '../../store/useProjectStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 
 interface LitRecord {
   id: string;
@@ -131,6 +132,7 @@ export default function ExtractionPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [picoResults, setPicoResults] = useState<Record<string, PicoData | null>>({});
   const [extracting, setExtracting] = useState<Record<string, boolean>>({});
+  const [extractingGpt, setExtractingGpt] = useState<Record<string, boolean>>({});
   const [fetching, setFetching] = useState<Record<string, boolean>>({});
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -138,7 +140,9 @@ export default function ExtractionPage() {
   const [modalData, setModalData] = useState<{ isOpen: boolean; title: string; abstract: string; fullText: string; highlights: string[] }>({
     isOpen: false, title: '', abstract: '', fullText: '', highlights: []
   });
+  const [activeTab, setActiveTab] = useState<'pending' | 'completed'>('pending');
   const { currentProjectId } = useProjectStore();
+  const { openAiApiKey } = useSettingsStore();
 
   const loadRecords = useCallback(async () => {
     setIsLoading(true);
@@ -185,6 +189,35 @@ export default function ExtractionPage() {
       alert('PICO 추출 중 오류가 발생했습니다.');
     } finally {
       setExtracting(prev => ({ ...prev, [rec.id]: false }));
+    }
+  };
+
+  const handleExtractGpt = async (rec: LitRecord) => {
+    if (!openAiApiKey) {
+      alert('설정(Settings) 페이지에서 OpenAI API Key를 먼저 입력해주세요.');
+      return;
+    }
+    setExtractingGpt(prev => ({ ...prev, [rec.id]: true }));
+    try {
+      const full_text = manualTexts[rec.id] || rec.full_text || '';
+      const res = await apiClient.post('/search/pico_extract_gpt/', {
+        api_key: openAiApiKey,
+        record_id: rec.id,
+        title: rec.title,
+        abstract: rec.abstract || '',
+        full_text,
+      });
+      setPicoResults(prev => ({ ...prev, [rec.id]: res.data }));
+      setExpanded(prev => ({ ...prev, [rec.id]: true }));
+      if (res.data.saved_to_db) {
+        setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, status: 'EXTRACTED' } : r));
+      }
+      alert('ChatGPT 강화 추출이 완료되었습니다!');
+    } catch (e: any) {
+      console.error(e);
+      alert(e.response?.data?.error || 'ChatGPT PICO 추출 중 오류가 발생했습니다.');
+    } finally {
+      setExtractingGpt(prev => ({ ...prev, [rec.id]: false }));
     }
   };
 
@@ -278,6 +311,36 @@ export default function ExtractionPage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('pending')}
+          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${
+            activeTab === 'pending' 
+            ? 'border-tkm-main text-tkm-main' 
+            : 'border-transparent text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          추출 대기 (Pending)
+          <span className="ml-2 bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full text-xs">
+            {records.filter(r => r.status !== 'EXTRACTED').length}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('completed')}
+          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${
+            activeTab === 'completed' 
+            ? 'border-tkm-main text-tkm-main' 
+            : 'border-transparent text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          추출 완료 (Completed)
+          <span className="ml-2 bg-tkm-light text-tkm-main px-2 py-0.5 rounded-full text-xs">
+            {records.filter(r => r.status === 'EXTRACTED').length}
+          </span>
+        </button>
+      </div>
+
       {/* Stats Bar */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 text-center">
@@ -311,7 +374,9 @@ export default function ExtractionPage() {
 
       {/* Records List */}
       <div className="space-y-6">
-        {records.map((rec) => {
+        {records
+          .filter(r => activeTab === 'completed' ? r.status === 'EXTRACTED' : r.status !== 'EXTRACTED')
+          .map((rec) => {
           const pico = picoResults[rec.id];
           const isExtracting = extracting[rec.id];
           const isOpen = expanded[rec.id];
@@ -334,14 +399,25 @@ export default function ExtractionPage() {
                     <p className="text-sm text-gray-500 mt-1">{rec.authors}</p>
                   </div>
 
-                  <div className="shrink-0">
+                  <div className="flex gap-2 shrink-0">
                     <button
                       onClick={() => handleExtract(rec)}
-                      disabled={isExtracting}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-tkm-main hover:bg-tkm-dark text-white rounded-xl font-bold text-sm transition-colors disabled:opacity-50 whitespace-nowrap"
+                      disabled={isExtracting || extractingGpt[rec.id]}
+                      className="flex items-center gap-2 px-3 py-2.5 bg-tkm-main hover:bg-tkm-dark text-white rounded-xl font-bold text-xs transition-all disabled:opacity-50 whitespace-nowrap shadow-sm"
+                      title="기본 AI 모델 사용"
                     >
-                      {isExtracting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                      {isExtracting ? 'AI 분석 중...' : isDone ? '재추출' : 'PICO 자동 추출'}
+                      {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
+                      {isExtracting ? 'AI 분석 중...' : isDone ? '기본 재추출' : 'PICO 자동 추출'}
+                    </button>
+                    
+                    <button
+                      onClick={() => handleExtractGpt(rec)}
+                      disabled={isExtracting || extractingGpt[rec.id]}
+                      className="flex items-center gap-2 px-3 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs transition-all disabled:opacity-50 whitespace-nowrap shadow-sm border border-blue-400"
+                      title="ChatGPT(GPT-4o) 강화 추출"
+                    >
+                      {extractingGpt[rec.id] ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                      {extractingGpt[rec.id] ? 'GPT 분석 중...' : 'GPT 강화 추출'}
                     </button>
                   </div>
                 </div>
@@ -405,6 +481,24 @@ export default function ExtractionPage() {
                     rows={manualTexts[rec.id] ? 5 : 2}
                     className="w-full text-xs font-mono border border-gray-200 rounded-lg p-3 resize-none focus:ring-2 focus:ring-tkm-main outline-none bg-white transition-all shadow-inner leading-relaxed"
                   />
+                  <div className="mt-3 flex gap-3">
+                    <button
+                      onClick={() => handleExtract(rec)}
+                      disabled={isExtracting || extractingGpt[rec.id]}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-tkm-main text-white rounded-xl font-bold hover:bg-tkm-dark transition-all shadow-lg shadow-tkm-light disabled:opacity-50"
+                    >
+                      {isExtracting ? <Loader2 size={18} className="animate-spin" /> : <Activity size={18} />}
+                      {isExtracting ? 'AI 추출 중...' : '기본 AI로 추출'}
+                    </button>
+                    <button
+                      onClick={() => handleExtractGpt(rec)}
+                      disabled={isExtracting || extractingGpt[rec.id]}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                    >
+                      {extractingGpt[rec.id] ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                      {extractingGpt[rec.id] ? 'GPT 추출 중...' : 'ChatGPT 강화 추출'}
+                    </button>
+                  </div>
                 </div>
               </div>
 

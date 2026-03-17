@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Search, Layers, FileCheck, FileText, Database, FolderOpen, LayoutDashboard } from 'lucide-react';
+import { Search, Layers, FileCheck, FileText, Database, FolderOpen, LayoutDashboard, ShieldCheck, Settings } from 'lucide-react';
 import { useProjectStore } from '../store/useProjectStore';
 
 const NAV = [
@@ -10,6 +10,8 @@ const NAV = [
   { to: '/screening-rct',      icon: <FileCheck size={18} />,       label: 'RCT 자동 선별' },
   { to: '/screening-fulltext', icon: <FileText size={18} />,        label: '원문 분석 선별' },
   { to: '/extraction',         icon: <Database size={18} />,        label: '핵심 정보 추출' },
+  { to: '/rob',                icon: <ShieldCheck size={18} />,     label: '질평가 (ROB)' },
+  { to: '/settings',           icon: <Settings size={18} />,        label: '설정' },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {

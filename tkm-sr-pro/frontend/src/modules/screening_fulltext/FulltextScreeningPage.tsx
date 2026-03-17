@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   FileSearch, CheckCircle2, XCircle, AlertTriangle, Loader2,
   RefreshCw, ChevronDown, ChevronUp, Sparkles, StickyNote,
-  Check, X, Shield, ShieldOff, Info
+  Check, X, Shield, ShieldOff, Info, Database, Maximize2, FileText, Upload
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -49,6 +49,7 @@ interface RecordState {
   notes: string;
   excludeReason: string;
   isFetching: boolean;
+  isUploading: boolean;
 }
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
@@ -63,10 +64,82 @@ const RECOM_STYLE: Record<string, string> = {
   UNCERTAIN:'bg-yellow-50 border-yellow-300 text-yellow-800',
 };
 
+function FullTextModal({ isOpen, onClose, title, abstract, fullText, highlights }: { isOpen: boolean; onClose: () => void; title: string; abstract: string; fullText: string; highlights: string[] }) {
+  if (!isOpen) return null;
+
+  const renderContent = (content: string, label: string) => {
+    if (!content) return null;
+    
+    let result = content;
+    // For screening, highlights might be in criterion evidence or summary
+    const cleanHighlights = highlights
+      .map(h => {
+        // Strip tags if they exist (though screening engine might not use the same tags as extraction)
+        let cleaned = h.replace(/^\[.*?\]\s*(\[.*?\]\s*)?/, '').trim(); 
+        cleaned = cleaned.replace(/\.\.\.$/, '');
+        return cleaned;
+      })
+      .filter(h => h.length > 5)
+      .sort((a, b) => b.length - a.length);
+
+    cleanHighlights.forEach(h => {
+      try {
+        const escaped = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                         .replace(/\s+/g, '[\\s\\n\\r]+')
+                         .replace(/-/g, '[\\s\\n\\r-–—]*'); 
+        
+        const regex = new RegExp(`(${escaped})`, 'gi');
+        result = result.replace(regex, '<mark class="bg-yellow-200 px-0.5 rounded text-gray-900 shadow-sm">$1</mark>');
+      } catch (e) {
+        console.error("Highlighting error:", e);
+      }
+    });
+
+    return (
+      <div className="mb-8 last:mb-0">
+        <div className="flex items-center gap-2 mb-4">
+          <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest ${
+            label === 'Abstract (초록)' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+          }`}>{label}</span>
+          <div className="h-px bg-gray-100 flex-1"></div>
+        </div>
+        <div className="text-gray-700 leading-relaxed font-sans whitespace-pre-wrap selection:bg-tkm-main selection:text-white" dangerouslySetInnerHTML={{ __html: result }} />
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+          <h2 className="text-lg font-bold text-gray-800 line-clamp-1 flex items-center gap-2">
+            <FileText className="text-tkm-main" size={20} />
+            {title}
+          </h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
+            <X size={20} className="text-gray-500" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-8">
+          {renderContent(abstract, 'Abstract (초록)')}
+          {renderContent(fullText, 'Full-text (원문 본문)')}
+        </div>
+        <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center text-xs text-gray-400">
+          <span>AI가 탐지한 근거 문장이 <span className="bg-yellow-200 text-gray-800 px-1 rounded">노란색</span>으로 하이라이팅되어 있습니다.</span>
+          <button onClick={onClose} className="px-6 py-2 bg-gray-800 text-white rounded-lg font-bold hover:bg-black transition-colors">닫기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FulltextScreeningPage() {
   const [records, setRecords] = useState<LitRecord[]>([]);
   const [states, setStates] = useState<Record<string, RecordState>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [modalData, setModalData] = useState<{ isOpen: boolean; title: string; abstract: string; fullText: string; highlights: string[] }>({
+    isOpen: false, title: '', abstract: '', fullText: '', highlights: []
+  });
   const { currentProjectId } = useProjectStore();
 
   const loadRecords = useCallback(async () => {
@@ -83,7 +156,7 @@ export default function FulltextScreeningPage() {
           fullText: r.full_text || '', decisionStatus: r.status,
           notes: r.reviewer_notes || '',
           excludeReason: r.exclusion_reason || '',
-          isFetching: false,
+          isFetching: false, isUploading: false,
         };
       });
       setStates(init);
@@ -124,6 +197,26 @@ export default function FulltextScreeningPage() {
       setStates(prev => ({ ...prev, [id]: { ...prev[id], isFetching: false } }));
     }
   };
+  
+  const handleFileUpload = async (id: string, file: File) => {
+    setStates(prev => ({ ...prev, [id]: { ...prev[id], isUploading: true } }));
+    const formData = new FormData();
+    formData.append('record_id', id);
+    formData.append('pdf_file', file);
+
+    try {
+      const res = await apiClient.post('/search/upload_fulltext_pdf/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data.ok) {
+        setStates(prev => ({ ...prev, [id]: { ...prev[id], fullText: res.data.full_text, isUploading: false } }));
+        alert('PDF 원문 텍스트 추출에 성공했습니다.');
+      }
+    } catch (e: any) {
+      alert(e.response?.data?.error || 'PDF 파일 업로드 중 오류가 발생했습니다.');
+      setStates(prev => ({ ...prev, [id]: { ...prev[id], isUploading: false } }));
+    }
+  };
 
   const handleDecision = async (rec: LitRecord, decision: 'include' | 'exclude') => {
     const st = states[rec.id];
@@ -133,12 +226,32 @@ export default function FulltextScreeningPage() {
         decision,
         exclusion_reason: decision === 'exclude' ? st.excludeReason : '',
         reviewer_notes: st.notes,
+        full_text: st.fullText,
       });
       const newStatus = decision === 'include' ? 'FULLTEXT_INCLUDED' : 'FULLTEXT_EXCLUDED';
       setStates(prev => ({ ...prev, [rec.id]: { ...prev[rec.id], decisionStatus: newStatus } }));
       setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, status: newStatus } : r));
     } catch {
       alert('저장에 실패했습니다.');
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      const params = currentProjectId ? `?project_id=${currentProjectId}` : '';
+      const response = await apiClient.get(`/search/export_fulltext_screening/${params}`, {
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Fulltext_Screening_List_${new Date().toISOString().split('T')[0]}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (e) {
+      console.error(e);
+      alert('엑셀 내보내기 중 오류가 발생했습니다.');
     }
   };
 
@@ -159,10 +272,19 @@ export default function FulltextScreeningPage() {
             CONSORT/PRISMA 기준에 따라 각 포함·배제 기준을 자동 점검하고 연구자의 최종 판단을 보조합니다.
           </p>
         </div>
-        <button onClick={loadRecords} disabled={isLoading}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50 shadow-sm disabled:opacity-50">
-          <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} /> 새로고침
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={loadRecords} disabled={isLoading}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50 shadow-sm disabled:opacity-50">
+            <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} /> 새로고침
+          </button>
+          <button
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-all shadow-lg shadow-green-100"
+          >
+            <Database size={20} />
+            엑셀로 내보내기 (.xlsx)
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -238,12 +360,42 @@ export default function FulltextScreeningPage() {
                       <button
                         onClick={() => handleFetchFullText(rec.id)}
                         disabled={st.isFetching}
-                        className="flex items-center gap-2 px-4 py-2 bg-tkm-light text-tkm-main hover:bg-tkm-main hover:text-white border border-tkm-main/30 rounded-xl font-bold text-xs transition-colors disabled:opacity-50"
+                        className="flex items-center gap-2 px-4 py-2 bg-tkm-light text-tkm-main hover:bg-tkm-main hover:text-white border border-tkm-main/30 rounded-xl font-bold text-[10px] transition-colors disabled:opacity-50"
                       >
-                        {st.isFetching ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                        {st.isFetching ? '원문 가져오는 중...' : 'PMC 원문 자동 가져오기'}
+                        {st.isFetching ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                        {st.isFetching ? '가져오는 중...' : 'PMC 자동 가져오기'}
                       </button>
                     )}
+
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        onChange={(e) => e.target.files && handleFileUpload(rec.id, e.target.files[0])}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                        title="PDF 업로드"
+                      />
+                      <button
+                        disabled={st.isUploading}
+                        className="w-full flex items-center gap-2 px-4 py-2 bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 rounded-xl font-bold text-[10px] shadow-sm transition-all disabled:opacity-50"
+                      >
+                        {st.isUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                        PDF 업로드
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => setModalData({
+                        isOpen: true,
+                        title: rec.title,
+                        abstract: rec.abstract,
+                        fullText: st.fullText || '',
+                        highlights: st.screening?.criteria_results.map(cr => cr.evidence) || []
+                      })}
+                      className="flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 rounded-xl font-bold text-[10px] shadow-sm transition-all"
+                    >
+                      <Maximize2 size={12} /> 크게 보기 & 근거 확인
+                    </button>
                   </div>
                 </div>
 
@@ -400,6 +552,15 @@ export default function FulltextScreeningPage() {
           );
         })}
       </div>
+      
+      <FullTextModal
+        isOpen={modalData.isOpen}
+        onClose={() => setModalData(prev => ({ ...prev, isOpen: false }))}
+        title={modalData.title}
+        abstract={modalData.abstract}
+        fullText={modalData.fullText}
+        highlights={modalData.highlights}
+      />
     </div>
   );
 }
