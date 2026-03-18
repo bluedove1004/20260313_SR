@@ -10,6 +10,38 @@ class MeSHExpander:
     def __init__(self):
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
+    def get_preferred_mesh_term(self, query: str) -> str:
+        """
+        Fetches only the primary MeSH Heading (Descriptor) for a term.
+        Used for handling Embase-style /exp in PubMed.
+        """
+        clean_q = query.strip("'").strip('"')
+        try:
+            search_params = {
+                "db": "mesh",
+                "term": f"{clean_q}[All Fields]",
+                "retmax": 1,
+                "retmode": "json"
+            }
+            res = requests.get(f"{self.base_url}/esearch.fcgi", params=search_params, timeout=5)
+            data = res.json()
+            id_list = data.get("esearchresult", {}).get("idlist", [])
+            if not id_list:
+                return clean_q
+
+            summary_params = {"db": "mesh", "id": id_list[0], "retmode": "json"}
+            res = requests.get(f"{self.base_url}/esummary.fcgi", params=summary_params, timeout=5)
+            result_obj = res.json().get("result", {})
+            uids = result_obj.get("uids", [])
+            if uids:
+                record = result_obj.get(uids[0], {})
+                terms = record.get("ds_meshterms", [])
+                if terms:
+                    return terms[0] # The Heading
+            return clean_q
+        except:
+            return clean_q
+
     def expand_query(self, query: str) -> str:
         """
         Takes a string like 'atopic dermatitis' and returns an expanded 

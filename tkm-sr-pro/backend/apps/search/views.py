@@ -23,109 +23,93 @@ class TestView(APIView):
     def get(self, request):
         return Response({"status": "ok"}, status=status.HTTP_200_OK)
 
-class ExpandQueryView(APIView):
-    def _perform_structured_expansion(self, disease_input, formula_input, category, include_rct, api_key):
-        combined_text = f"{disease_input} {formula_input}".strip()
-        print(f"DEBUG: START EXPAND - Pool='{combined_text}'")
-        
-        terms = re.findall(r'\'[^\']+\'|"[^"]+"|\S+', combined_text)
-        d_parts = [] 
-        f_parts = []
-        
-        tkm_expander = TKMExpander()
-        mesh_expander = MeSHExpander()
+def perform_structured_expansion(disease_input, formula_input, category, include_rct, api_key):
+    print(f"DEBUG: START EXPAND - A='{disease_input}', B='{formula_input}', C='{category}'")
+    sys.stdout.flush()
+    
+    tkm_expander = TKMExpander()
+    mesh_expander = MeSHExpander()
+    
+    d_parts = [] 
+    f_parts = []
 
-        # Phase 1: Local Categorization & Expansion
-        for t in terms:
-            clean_t = t.strip("'").strip('"')
-            if not clean_t: continue
-            
-            # Check TKM
-            if clean_t in tkm_expander.tkm_prescriptions:
-                syns = tkm_expander.tkm_prescriptions[clean_t]
-                f_parts.append(f'("{clean_t}" OR ' + " OR ".join(f'"{s}"' if " " in s else s for s in syns) + ')')
-            # Check MeSH (Latin only)
-            elif re.search(r'[a-zA-Z]', clean_t):
-                try:
-                    expanded = mesh_expander.expand_query(clean_t)
-                    d_parts.append(expanded)
-                except:
-                    d_parts.append(f'"{clean_t}"' if " " in clean_t else clean_t)
-            else:
-                # Other (CJK not in prescription list)
-                d_parts.append(f'"{clean_t}"' if " " in clean_t else clean_t)
-
-        # Phase 2: GPT Enrichment (if key exists)
-        # We merge GPT results with our local ones to be safe
-        if api_key:
-            prompt = f"""Expert Medical Librarian Task:
-Expand the following into A: Diseases/Population and B: Formulas/Intervention.
-Input: {combined_text}
-CRITICAL: Include the original terms in the synonyms strings.
-Return ONLY JSON: {{'expanded_disease': '(term1 OR term2)', 'expanded_formula': '(term3 OR term4)'}}"""
+    # Process A (Population/Disease)
+    a_terms = re.findall(r'\'[^\']+\'|"[^"]+"|\S+', disease_input)
+    for t in a_terms:
+        clean_t = t.strip("'").strip('"')
+        if not clean_t: continue
+        if re.search(r'[a-zA-Z]', clean_t):
             try:
-                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                data = {"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.1}
-                response = http_requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data, timeout=30)
-                if response.status_code == 200:
-                    parsed = json.loads(response.json()["choices"][0]["message"]["content"])
-                    gpt_d = parsed.get("expanded_disease", "")
-                    gpt_f = parsed.get("expanded_formula", "")
-                    if gpt_d: d_parts.append(gpt_d)
-                    if gpt_f: f_parts.append(gpt_f)
-            except Exception as e:
-                print(f"DEBUG: GPT ERROR: {e}")
+                expanded = mesh_expander.expand_query(clean_t)
+                d_parts.append(expanded)
+            except:
+                d_parts.append(f'"{clean_t}"' if " " in clean_t else clean_t)
+        else:
+            d_parts.append(f'"{clean_t}"' if " " in clean_t else clean_t)
 
-        # Final Construction: (A) AND (B OR C) AND (D)
-        final_groups = []
-        
-        # Section A: Population (Disease)
-        if d_parts:
-            # We join multiple A terms with AND
-            unique_d = sorted(list(set(d_parts)))
-            a_inner = " AND ".join(unique_d)
-            # Wrap as (A)
-            final_groups.append(f"({a_inner})")
-        
-        # Section B + C: Intervention (Formula OR Category)
-        cat_mesh = tkm_expander.tkm_categories.get(category, "")
-        
-        # Group B (Formulas)
-        b_part = ""
-        if f_parts:
-            unique_f = sorted(list(set(f_parts)))
-            if len(unique_f) > 1:
-                b_part = "(" + " OR ".join(unique_f) + ")"
-            else:
-                b_part = unique_f[0]
+    # Process B (Intervention/Formula)
+    b_terms = re.findall(r'\'[^\']+\'|"[^"]+"|\S+', formula_input)
+    for t in b_terms:
+        clean_t = t.strip("'").strip('"')
+        if not clean_t: continue
+        # If in local dictionary, use synonyms
+        if clean_t in tkm_expander.tkm_prescriptions:
+            syns = tkm_expander.tkm_prescriptions[clean_t]
+            f_parts.append(f'("{clean_t}" OR ' + " OR ".join(f'"{s}"' if " " in s else s for s in syns) + ')')
+        else:
+            # Add as is
+            f_parts.append(f'"{clean_t}"' if " " in clean_t else clean_t)
 
-        # Combine B and C
-        itv_group = ""
-        if b_part and cat_mesh:
-            itv_group = f"({b_part} OR {cat_mesh})"
-        elif b_part:
-            itv_group = f"({b_part})"
-        elif cat_mesh:
-            itv_group = f"({cat_mesh})"
-            
-        if itv_group:
-            final_groups.append(itv_group)
-            
-        # Section D: RCT
-        if include_rct:
-            rct_str = "'randomized controlled trial'/exp OR 'controlled clinical trial' OR random* OR 'placebo' OR trial"
-            # Wrap as (D)
-            final_groups.append(f"({rct_str})")
-            
-        # SAFETY: Preserve original input if no structures were built
-        if not final_groups and combined_text:
-            text_part = f'"{combined_text}"' if " " in combined_text else combined_text
-            final_groups.append(f"({text_part})")
+    # Phase 2: GPT Enrichment (Optional)
+    if api_key:
+        prompt = f"Expert Medical Librarian: Expand A: {disease_input} and B: {formula_input} into English/CJK synonyms. Return JSON {{'expanded_disease': '(t1 OR t2)', 'expanded_formula': '(t3 OR t4)'}}"
+        try:
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            data = {"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.1}
+            response = http_requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data, timeout=30)
+            if response.status_code == 200:
+                parsed = json.loads(response.json()["choices"][0]["message"]["content"])
+                gpt_d = parsed.get("expanded_disease", "")
+                gpt_f = parsed.get("expanded_formula", "")
+                if gpt_d: d_parts.append(gpt_d)
+                if gpt_f: f_parts.append(gpt_f)
+        except Exception as e:
+            print(f"DEBUG: GPT ERROR: {e}")
 
-        res_query = " AND ".join(final_groups)
-        print(f"DEBUG: FINAL EXPANSION (Strict): {res_query}")
-        sys.stdout.flush()
-        return res_query
+    # Final Construction: (A) AND ((B) OR (C)) AND (D)
+    final_groups = []
+    
+    # Section A
+    if d_parts:
+        a_inner = " AND ".join(sorted(list(set(d_parts))))
+        final_groups.append(f"({a_inner})")
+    
+    # Section B + C
+    lookup_cat = category if category else "전체"
+    cat_mesh = tkm_expander.tkm_categories.get(lookup_cat, "")
+    b_formatted = ""
+    if f_parts:
+        b_inner = " OR ".join(sorted(list(set(f_parts))))
+        b_formatted = f"({b_inner})"
+    
+    if b_formatted and cat_mesh:
+        final_groups.append(f"(({b_formatted}) OR ({cat_mesh}))")
+    elif b_formatted:
+        final_groups.append(f"({b_formatted})")
+    elif cat_mesh:
+        final_groups.append(f"({cat_mesh})")
+        
+    # Section D
+    if include_rct:
+        rct_str = "'randomized controlled trial'/exp OR 'controlled clinical trial' OR random* OR 'placebo' OR trial"
+        final_groups.append(f"({rct_str})")
+        
+    res_query = " AND ".join(final_groups)
+    print(f"DEBUG: FINAL EXPANSION (Strict): {res_query}")
+    sys.stdout.flush()
+    return res_query
+
+class ExpandQueryView(APIView):
 
     def post(self, request):
         print(f"DEBUG: ExpandQueryView index data: {request.data}")
@@ -134,11 +118,11 @@ Return ONLY JSON: {{'expanded_disease': '(term1 OR term2)', 'expanded_formula': 
         if serializer.is_valid():
             disease = serializer.validated_data.get('disease', '').strip()
             formula = serializer.validated_data.get('formula', '').strip()
-            category = serializer.validated_data.get('category', '전체')
+            category = serializer.validated_data.get('category', '')
             include_rct = serializer.validated_data.get('include_rct', True)
             api_key = serializer.validated_data.get('api_key', '')
             
-            final_query = self._perform_structured_expansion(disease, formula, category, include_rct, api_key)
+            final_query = perform_structured_expansion(disease, formula, category, include_rct, api_key)
             return Response({"expanded_query": final_query}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -162,9 +146,8 @@ class FederatedSearchView(APIView):
             if exact_query:
                 pubmed_query = exact_query
             else:
-                if disease or formula or (category and category != "전체"):
-                    ev = ExpandQueryView()
-                    pubmed_query = ev._perform_structured_expansion(disease, formula, category, include_rct, api_key)
+                if disease or formula or (category and category != "전체" and category != ""):
+                    pubmed_query = perform_structured_expansion(disease, formula, category, include_rct, api_key)
                 else:
                     expander = MeSHExpander()
                     pubmed_query = expander.expand_query(query)

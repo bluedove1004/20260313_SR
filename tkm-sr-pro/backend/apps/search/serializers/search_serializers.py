@@ -15,7 +15,7 @@ class SearchQuerySerializer(serializers.Serializer):
     query = serializers.CharField(required=False, allow_blank=True)
     disease = serializers.CharField(required=False, allow_blank=True)
     formula = serializers.CharField(required=False, allow_blank=True)
-    category = serializers.CharField(required=False, default="전체")
+    category = serializers.CharField(required=False, allow_blank=True, default="")
     include_rct = serializers.BooleanField(required=False, default=True)
     exact_query = serializers.CharField(required=False, allow_blank=True)
     api_key = serializers.CharField(required=False, allow_blank=True)
@@ -29,6 +29,6 @@ class SearchQuerySerializer(serializers.Serializer):
 class ExpandQuerySerializer(serializers.Serializer):
     disease = serializers.CharField(required=False, allow_blank=True)
     formula = serializers.CharField(required=False, allow_blank=True)
-    category = serializers.CharField(required=False, default="전체")
+    category = serializers.CharField(required=False, allow_blank=True, default="")
     include_rct = serializers.BooleanField(required=False, default=True)
     api_key = serializers.CharField(required=False, allow_blank=True)

@@ -16,8 +16,30 @@ class PubMedClient(BaseSearchClient):
         self.base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
     def search(self, query: str, expanded_query: str = None, max_results: int = 100) -> List[Dict[str, Any]]:
+        import re
+        from .mesh_expander import MeSHExpander
+        
         search_url = f"{self.base_url}/esearch.fcgi"
         term = expanded_query if expanded_query else query
+        
+        # PubMed Sanitization & /exp handling
+        # 1. Replace single quotes with double quotes (PubMed preference)
+        term = term.replace("'", '"')
+        
+        # 2. Handle /exp: replace 'word'/exp with 'MeSH Heading'[MeSH Terms]
+        # Regex to find "quoted word"/exp or word/exp
+        exp_pattern = re.compile(r'("([^"]+)"|([^\s\(\)]+))/exp')
+        expander = MeSHExpander()
+
+        def exp_replacer(match):
+            original_full = match.group(0)
+            phrase = match.group(2) if match.group(2) else match.group(3)
+            # Find official MeSH heading
+            official = expander.get_preferred_mesh_term(phrase)
+            return f'"{official}"[MeSH Terms]'
+
+        term = exp_pattern.sub(exp_replacer, term)
+        
         search_params = {
             "db": "pubmed",
             "term": term,
@@ -291,12 +313,16 @@ class SearchManager:
         aggregated = []
         if not dbs:
             dbs = list(self.clients.keys())
+            
+        # Normalize keys to lowercase for robust matching
+        lookup = {k.lower(): v for k, v in self.clients.items()}
         
         for db in dbs:
-            if db in self.clients:
+            db_lower = db.lower()
+            if db_lower in lookup:
                 try:
                     # Pass both original and expanded query
-                    results = self.clients[db].search(query, expanded_query=expanded_query, max_results=max_results)
+                    results = lookup[db_lower].search(query, expanded_query=expanded_query, max_results=max_results)
                     if results:
                         aggregated.extend(results)
                 except Exception as e:

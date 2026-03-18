@@ -18,13 +18,44 @@ class TKMExpander:
                      "OR ('herbal medicine'/exp OR 'herbal medicine') "
                      "OR ('medicinal plant'/exp OR 'medicinal plant') "
                      "OR ('herbaceous agent'/exp OR 'herbaceous agent')"),
-            "일반침": '("Acupuncture"[MeSH] OR "Acupuncture Therapy"[MeSH])',
-            "전침": '("Electroacupuncture"[MeSH] OR "Electro-acupuncture")',
-            "봉약침": '("Pharmacopuncture" OR "Acupuncture, Pharmacological" OR "Bee Venoms"[MeSH])',
-            "뜸": '("Moxibustion"[MeSH])',
-            "추나": '("Tuina" OR "Chuna" OR "Manipulation, Orthopedic"[MeSH])',
-            "부항": '("Cupping Therapy" OR "Cupping")',
-            "매선": '("Thread Embedding" OR "Catgut Embedding" OR "Acupoint Thread Embedding")'
+            "일반침": ("('acupuncture'/exp OR 'acupuncture') "
+                      "OR ('acupuncture point'/exp OR 'acupuncture point') "
+                      "OR acupoint* "
+                      "OR 'body acupuncture' "
+                      "OR (scalp AND acupuncture) "
+                      "OR ('dry needling'/exp OR 'dry needling') "
+                      "OR ('trigger point'/exp OR 'trigger point')"),
+            "전침": ("('electroacupuncture'/exp OR 'electroacupuncture') "
+                     "OR 'electro-acupuncture' "
+                     "OR (electric AND acupuncture)"),
+            "봉약침": ("('bee venom'/exp OR 'bee venom') "
+                      "OR ('apitherapy'/exp OR 'apitherapy') "
+                      "OR apiotherapy "
+                      "OR apipuncture "
+                      "OR ('pharmacopuncture'/exp OR 'pharmacopuncture') "
+                      "OR ('pharmacoacupuncture'/exp OR pharmacoacupuncture) "
+                      "OR aquapuncture "
+                      "OR (aqua AND ('acupuncture'/exp OR acupuncture)) "
+                      "OR (herbal AND ('acupuncture'/exp OR acupuncture)) "
+                      "OR (hydro AND ('acupuncture'/exp OR acupuncture))"),
+            "뜸": ("('moxibustion'/exp OR 'moxibustion') "
+                  "OR ('artemisia'/exp OR 'artemisia') "
+                  "OR moxa*"),
+            "추나": ("('chiropractic manipulation'/exp OR 'chiropractic manipulation') "
+                      "OR ('chiropractic'/exp OR 'chiropractic') "
+                      "OR ('massage'/exp OR 'massage') "
+                      "OR ('massotherapy'/exp OR massotherapy) "
+                      "OR ('tuina'/exp OR tuina) "
+                      "OR chuna"),
+            "부항": ("('bloodletting'/exp OR 'bloodletting') "
+                      "OR ('blood letting'/exp OR 'blood letting') "
+                      "OR ('cupping therapy'/exp OR 'cupping therapy') "
+                      "OR ventouse "
+                      "OR ('phlebotomy'/exp OR 'phlebotomy') "
+                      "OR ('venesection'/exp OR venesection) "
+                      "OR (spilled AND ('blood'/exp OR blood))"),
+            "매선": ("(catgut OR thread) "
+                      "AND (acupoint OR acupunture OR needle)")
         }
 
     def expand(self, query: str, category: str = "전체") -> str:

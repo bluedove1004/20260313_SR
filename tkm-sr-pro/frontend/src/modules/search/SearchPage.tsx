@@ -169,7 +169,10 @@ const SearchPage: React.FC = () => {
                 <button
                   key={cat}
                   type="button"
-                  onClick={() => setCategory(category === cat ? '' : cat)}
+                  onClick={() => {
+                    setCategory(category === cat ? '' : cat);
+                    setExpandedQuery('');
+                  }}
                   className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${
                     category === cat 
                       ? 'bg-purple-600 text-white ring-2 ring-purple-600 ring-offset-2' 
