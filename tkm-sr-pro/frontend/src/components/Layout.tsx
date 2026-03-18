@@ -4,14 +4,14 @@ import { Search, Layers, FileCheck, FileText, Database, FolderOpen, LayoutDashbo
 import { useProjectStore } from '../store/useProjectStore';
 
 const NAV = [
-  { to: '/',                   icon: <LayoutDashboard size={18} />, label: '대시보드' },
-  { to: '/search',             icon: <Search size={18} />,          label: '실시간 통합 검색' },
-  { to: '/dedup',              icon: <Layers size={18} />,          label: '중복 문헌 검토' },
-  { to: '/screening-rct',      icon: <FileCheck size={18} />,       label: 'RCT 자동 선별' },
-  { to: '/screening-fulltext', icon: <FileText size={18} />,        label: '원문 분석 선별' },
-  { to: '/extraction',         icon: <Database size={18} />,        label: '핵심 정보 추출' },
-  { to: '/rob',                icon: <ShieldCheck size={18} />,     label: '질평가 (ROB)' },
-  { to: '/settings',           icon: <Settings size={18} />,        label: '설정' },
+  { to: '/', icon: <LayoutDashboard size={18} />, label: '대시보드' },
+  { to: '/search', icon: <Search size={18} />, label: '실시간 통합 검색' },
+  { to: '/dedup', icon: <Layers size={18} />, label: '중복 문헌 검토' },
+  { to: '/screening-rct', icon: <FileCheck size={18} />, label: '주제별 자동 선별' },
+  { to: '/screening-fulltext', icon: <FileText size={18} />, label: '원문 분석 선별' },
+  { to: '/extraction', icon: <Database size={18} />, label: '핵심 정보 추출' },
+  { to: '/rob', icon: <ShieldCheck size={18} />, label: '질평가 (ROB)' },
+  { to: '/settings', icon: <Settings size={18} />, label: '설정' },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -31,8 +31,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
         {/* Current project pill */}
         <NavLink to="/projects" className={({ isActive }) =>
-          `mx-3 mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2 transition-colors cursor-pointer ${
-            isActive ? 'bg-tkm-main text-white' : 'bg-blue-50 hover:bg-blue-100'
+          `mx-3 mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2 transition-colors cursor-pointer ${isActive ? 'bg-tkm-main text-white' : 'bg-blue-50 hover:bg-blue-100'
           }`
         }>
           {({ isActive }) => (
@@ -59,8 +58,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${
-                  isActive ? 'bg-tkm-light text-tkm-main font-semibold' : 'text-gray-600 hover:bg-gray-100'
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm ${isActive ? 'bg-tkm-light text-tkm-main font-semibold' : 'text-gray-600 hover:bg-gray-100'
                 }`
               }
             >

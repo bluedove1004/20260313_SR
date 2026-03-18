@@ -45,6 +45,7 @@ services:
       - POSTGRES_PORT=5432
       - ELASTICSEARCH_URL=http://es:9200
       - AI_ENGINE_URL=http://ai_engine:8001
+      - PYTHONUNBUFFERED=1
     ports:
       - "8000:8000"
     depends_on:

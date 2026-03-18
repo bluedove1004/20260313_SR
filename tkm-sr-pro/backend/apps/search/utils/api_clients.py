@@ -287,7 +287,7 @@ class SearchManager:
             "CNKI": CnkiClient()
         }
 
-    def federated_search(self, query: str, expanded_query: str = None, dbs: List[str] = None) -> List[Dict[str, Any]]:
+    def federated_search(self, query: str, expanded_query: str = None, dbs: List[str] = None, max_results: int = 200) -> List[Dict[str, Any]]:
         aggregated = []
         if not dbs:
             dbs = list(self.clients.keys())
@@ -296,7 +296,7 @@ class SearchManager:
             if db in self.clients:
                 try:
                     # Pass both original and expanded query
-                    results = self.clients[db].search(query, expanded_query=expanded_query)
+                    results = self.clients[db].search(query, expanded_query=expanded_query, max_results=max_results)
                     if results:
                         aggregated.extend(results)
                 except Exception as e:

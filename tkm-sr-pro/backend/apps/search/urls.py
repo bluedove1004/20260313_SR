@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import (FederatedSearchView, SaveRecordsView, DeduplicateRecordsView,
+from .views import (FederatedSearchView, ExpandQueryView, SaveRecordsView, DeduplicateRecordsView,
                     DashboardStatsView, ImportedRecordsView,
                     ScreeningPendingView, RctPredictView, RctDecisionView,
                     RctIncludedListView, PicoExtractView, PicoExtractGptView,
@@ -11,6 +11,7 @@ from .views import (FederatedSearchView, SaveRecordsView, DeduplicateRecordsView
 
 urlpatterns = [
     path('federated_search/', FederatedSearchView.as_view(), name='federated_search'),
+    path('expand_query/', ExpandQueryView.as_view(), name='expand_query'),
     path('save_records/', SaveRecordsView.as_view(), name='save_records'),
     path('deduplicate/', DeduplicateRecordsView.as_view(), name='deduplicate'),
     path('dashboard_stats/', DashboardStatsView.as_view(), name='dashboard_stats'),

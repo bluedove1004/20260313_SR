@@ -11,30 +11,177 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from django.http import HttpResponse
 from .utils.api_clients import SearchManager
 from .utils.mesh_expander import MeSHExpander
-from .serializers.search_serializers import SearchQuerySerializer, LiteratureRecordSerializer
+from .utils.tkm_expander import TKMExpander
+from .serializers.search_serializers import SearchQuerySerializer, LiteratureRecordSerializer, ExpandQuerySerializer
 from common.utils.deduplicator import HybridDeduplicator
 from .models import LiteratureRecord, SearchProject
 
+import re
+import sys
+
+class TestView(APIView):
+    def get(self, request):
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)
+
+class ExpandQueryView(APIView):
+    def _perform_structured_expansion(self, disease_input, formula_input, category, include_rct, api_key):
+        combined_text = f"{disease_input} {formula_input}".strip()
+        print(f"DEBUG: START EXPAND - Pool='{combined_text}'")
+        
+        terms = re.findall(r'\'[^\']+\'|"[^"]+"|\S+', combined_text)
+        d_parts = [] 
+        f_parts = []
+        
+        tkm_expander = TKMExpander()
+        mesh_expander = MeSHExpander()
+
+        # Phase 1: Local Categorization & Expansion
+        for t in terms:
+            clean_t = t.strip("'").strip('"')
+            if not clean_t: continue
+            
+            # Check TKM
+            if clean_t in tkm_expander.tkm_prescriptions:
+                syns = tkm_expander.tkm_prescriptions[clean_t]
+                f_parts.append(f'("{clean_t}" OR ' + " OR ".join(f'"{s}"' if " " in s else s for s in syns) + ')')
+            # Check MeSH (Latin only)
+            elif re.search(r'[a-zA-Z]', clean_t):
+                try:
+                    expanded = mesh_expander.expand_query(clean_t)
+                    d_parts.append(expanded)
+                except:
+                    d_parts.append(f'"{clean_t}"' if " " in clean_t else clean_t)
+            else:
+                # Other (CJK not in prescription list)
+                d_parts.append(f'"{clean_t}"' if " " in clean_t else clean_t)
+
+        # Phase 2: GPT Enrichment (if key exists)
+        # We merge GPT results with our local ones to be safe
+        if api_key:
+            prompt = f"""Expert Medical Librarian Task:
+Expand the following into A: Diseases/Population and B: Formulas/Intervention.
+Input: {combined_text}
+CRITICAL: Include the original terms in the synonyms strings.
+Return ONLY JSON: {{'expanded_disease': '(term1 OR term2)', 'expanded_formula': '(term3 OR term4)'}}"""
+            try:
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                data = {"model": "gpt-4o", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.1}
+                response = http_requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data, timeout=30)
+                if response.status_code == 200:
+                    parsed = json.loads(response.json()["choices"][0]["message"]["content"])
+                    gpt_d = parsed.get("expanded_disease", "")
+                    gpt_f = parsed.get("expanded_formula", "")
+                    if gpt_d: d_parts.append(gpt_d)
+                    if gpt_f: f_parts.append(gpt_f)
+            except Exception as e:
+                print(f"DEBUG: GPT ERROR: {e}")
+
+        # Final Construction: A AND (B OR C) AND D
+        final_parts = []
+        
+        # A: Population (Disease)
+        if d_parts:
+            # We wrap with OR if we have multiple candidates (Local + GPT)
+            unique_d = list(set(d_parts))
+            final_parts.append("(" + " AND ".join(unique_d) + ")" if len(unique_d) > 1 else unique_d[0])
+        
+        # B+C: Intervention (Formula + Category)
+        cat_mesh = tkm_expander.tkm_categories.get(category, "")
+        int_pool = []
+        if f_parts:
+            int_pool.extend(list(set(f_parts)))
+            
+        if cat_mesh:
+            int_pool.append(cat_mesh)
+            
+        if int_pool:
+            final_parts.append("(" + " OR ".join(int_pool) + ")" if len(int_pool) > 1 else int_pool[0])
+            
+        # D: RCT
+        if include_rct:
+            rct_str = '("randomized controlled trial" OR trial OR "controlled clinical trial")'
+            final_parts.append(rct_str)
+            
+        # SAFETY: If after all that, we have NOTHING from the original text in our query, 
+        # we must at least include the original tokens.
+        if not d_parts and not f_parts and combined_text:
+            text_part = f'"{combined_text}"' if " " in combined_text else combined_text
+            final_parts.insert(0, text_part)
+
+        res_query = " AND ".join(final_parts)
+        print(f"DEBUG: FINAL EXPANSION: {res_query}")
+        sys.stdout.flush()
+        return res_query
+
+    def post(self, request):
+        print(f"DEBUG: ExpandQueryView index data: {request.data}")
+        sys.stdout.flush()
+        serializer = ExpandQuerySerializer(data=request.data)
+        if serializer.is_valid():
+            disease = serializer.validated_data.get('disease', '').strip()
+            formula = serializer.validated_data.get('formula', '').strip()
+            category = serializer.validated_data.get('category', '전체')
+            include_rct = serializer.validated_data.get('include_rct', True)
+            api_key = serializer.validated_data.get('api_key', '')
+            
+            final_query = self._perform_structured_expansion(disease, formula, category, include_rct, api_key)
+            return Response({"expanded_query": final_query}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 class FederatedSearchView(APIView):
     def post(self, request):
+        print(f"DEBUG: FederatedSearchView index data: {request.data}")
+        sys.stdout.flush()
         serializer = SearchQuerySerializer(data=request.data)
         if serializer.is_valid():
-            query = serializer.validated_data['query']
-            dbs = serializer.validated_data.get('dbs', ['PubMed'])
-            # 1. Expand the query using NCBI MeSH database
-            expander = MeSHExpander()
-            expanded_query = expander.expand_query(query)
+            query = serializer.validated_data.get('query', '')
+            disease = serializer.validated_data.get('disease', '').strip()
+            formula = serializer.validated_data.get('formula', '').strip()
+            category = serializer.validated_data.get('category', '전체')
+            include_rct = serializer.validated_data.get('include_rct', True)
+            exact_query = serializer.validated_data.get('exact_query', '')
+            api_key = serializer.validated_data.get('api_key', '')
+            max_results = serializer.validated_data.get('max_results', 300)
+            dbs = serializer.validated_data.get('dbs', ['PubMed', 'Cochrane', 'ScienceON', 'RISS', 'CiNii'])
             
-            # 2. Perform federated search with both original and expanded queries
+            # 1. Determine Expanded Query (Mainly for PubMed)
+            if exact_query:
+                pubmed_query = exact_query
+            else:
+                if disease or formula or (category and category != "전체"):
+                    ev = ExpandQueryView()
+                    pubmed_query = ev._perform_structured_expansion(disease, formula, category, include_rct, api_key)
+                else:
+                    expander = MeSHExpander()
+                    pubmed_query = expander.expand_query(query)
+            
+            # 2. Determine Plain Query (For ScienceON, RISS, CiNii)
+            # Remove PubMed-specific tags like [MeSH] or [Title/Abstract]
+            # And potentially remove RCT filter if it's too restrictive for non-English DBs
+            plain_query = re.sub(r'\[[^\]]+\]', '', pubmed_query)
+            # If the user customized the textarea, we use the cleaned textarea as the plain query
+            # Otherwise we use the concatenated disease+formula inputs
+            if not exact_query and (disease or formula):
+                # Clean version of concatenated inputs is often safer for simplistic DBs
+                non_pubmed_query = f"{disease} {formula}".strip()
+            else:
+                # Use cleaned expanded query
+                non_pubmed_query = plain_query
+
+            # Ensure we have a query for ScienceON/RISS/etc
+            if not non_pubmed_query:
+                non_pubmed_query = query if query else "한의학"
+
             manager = SearchManager()
-            results = manager.federated_search(query, expanded_query=expanded_query, dbs=dbs)
+            # We pass both: pubmed_query (with MeSH) and non_pubmed_query (clean structure)
+            # We use 'query' parameter of manager to hold the cleaned one, and 'expanded_query' for PubMed
+            results = manager.federated_search(non_pubmed_query, expanded_query=pubmed_query, dbs=dbs, max_results=max_results)
             
             return Response({
-                "query": query,
-                "expanded_query": expanded_query,
+                "query": non_pubmed_query,
+                "expanded_query": pubmed_query,
                 "results": results
             }, status=status.HTTP_200_OK)
-            
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class SaveRecordsView(APIView):
