@@ -6,14 +6,19 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { apiClient } from '../../api/client';
 
 const DB_OPTIONS = [
-  { id: 'pubmed', label: 'PubMed' },
-  { id: 'scienceon', label: 'ScienceON' },
-  { id: 'riss', label: 'RISS' },
+  { id: 'pubmed', label: 'Pubmed' },
+  { id: 'embase', label: 'Embase' },
+  { id: 'cochrane', label: 'Cochrane Library' },
+  { id: 'cinahl', label: 'CINAHL' },
+  { id: 'cnki', label: 'CNKI' },
   { id: 'cini', label: 'CiNii' },
+  { id: 'scienceon', label: 'SCIENCE ON' },
+  { id: 'riss', label: 'RISS' },
   { id: 'oasis', label: 'OASIS' },
+  { id: 'koreamed', label: 'KoreaMed' },
 ];
 
-const CATEGORIES = ['전체', '한약', '일반침', '전침', '봉약침', '뜸', '추나', '부항', '매선'];
+const CATEGORIES = ['한약', '일반침', '전침', '봉약침', '뜸', '추나', '부항', '매선'];
 
 const SearchPage: React.FC = () => {
   const { selectedDBs, toggleDB } = useSearchStore();
@@ -27,7 +32,7 @@ const SearchPage: React.FC = () => {
   const [formulaInput, setFormulaInput] = useState<string>('');
   const [includeRct, setIncludeRct] = useState<boolean>(true);
   const [expandedQuery, setExpandedQuery] = useState<string>('');
-  const [category, setCategory] = useState<string>('전체');
+  const [category, setCategory] = useState<string>('');
   const { currentProjectId } = useProjectStore();
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -130,25 +135,6 @@ const SearchPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="space-y-4">
-            <label className="block text-sm font-semibold">TKM 연구 분류 선택 (C)</label>
-            <div className="flex flex-wrap gap-3">
-              {CATEGORIES.map(cat => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => setCategory(cat)}
-                  className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${
-                    category === cat 
-                      ? 'bg-purple-600 text-white ring-2 ring-purple-600 ring-offset-2' 
-                      : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-4">
@@ -175,6 +161,26 @@ const SearchPage: React.FC = () => {
               <p className="text-[11px] text-gray-400 font-medium">* 구성 본초와 다국어 명칭으로 자동 확장됩니다.</p>
             </div>
           </div>
+          
+          <div className="space-y-4">
+            <label className="block text-sm font-semibold text-gray-700">C. 중재 종류 선택</label>
+            <div className="flex flex-wrap gap-3">
+              {CATEGORIES.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategory(category === cat ? '' : cat)}
+                  className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${
+                    category === cat 
+                      ? 'bg-purple-600 text-white ring-2 ring-purple-600 ring-offset-2' 
+                      : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
             <div className="flex items-center gap-4">
@@ -185,7 +191,7 @@ const SearchPage: React.FC = () => {
                   onChange={(e) => setIncludeRct(e.target.checked)}
                   className="w-5 h-5 accent-tkm-main"
                 />
-                <span className="text-sm font-bold text-gray-700">D. RCT 필터 필수 적용</span>
+                <span className="text-sm font-bold text-gray-700">D. RCT 필터 적용</span>
               </label>
             </div>
             
@@ -205,8 +211,8 @@ const SearchPage: React.FC = () => {
             value={expandedQuery}
             onChange={(e) => setExpandedQuery(e.target.value)}
             placeholder="AI 버튼을 눌러 확장을 수행하세요."
-            rows={5}
-            className="w-full px-5 py-4 font-mono text-sm border border-gray-300 rounded-xl focus:ring-4 focus:ring-tkm-light focus:border-tkm-main transition-shadow outline-none resize-none bg-black text-green-400"
+            rows={10}
+            className="w-full px-5 py-4 font-mono text-sm border border-gray-300 rounded-xl focus:ring-4 focus:ring-tkm-light focus:border-tkm-main transition-shadow outline-none overflow-y-auto bg-black text-green-400"
           />
             
             <button

@@ -11,7 +11,13 @@ class TKMExpander:
         
         self.tkm_categories = {
             "전체": "",
-            "한약": '("Medicine, Chinese Traditional"[MeSH] OR "Drugs, Chinese Herbal"[MeSH] OR "Herbal Medicine"[MeSH])',
+            "한약": ("('chinese medicine'/exp OR 'chinese medicine') "
+                     "OR ('chinese medicinal formula'/exp OR 'chinese medicinal formula') "
+                     "OR ('korean medicine'/exp OR 'korean medicine') "
+                     "OR ('kampo medicine drug'/exp OR 'kampo medicine drug') "
+                     "OR ('herbal medicine'/exp OR 'herbal medicine') "
+                     "OR ('medicinal plant'/exp OR 'medicinal plant') "
+                     "OR ('herbaceous agent'/exp OR 'herbaceous agent')"),
             "일반침": '("Acupuncture"[MeSH] OR "Acupuncture Therapy"[MeSH])',
             "전침": '("Electroacupuncture"[MeSH] OR "Electro-acupuncture")',
             "봉약침": '("Pharmacopuncture" OR "Acupuncture, Pharmacological" OR "Bee Venoms"[MeSH])',

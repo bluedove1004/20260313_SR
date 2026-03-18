@@ -76,40 +76,54 @@ Return ONLY JSON: {{'expanded_disease': '(term1 OR term2)', 'expanded_formula': 
             except Exception as e:
                 print(f"DEBUG: GPT ERROR: {e}")
 
-        # Final Construction: A AND (B OR C) AND D
-        final_parts = []
+        # Final Construction: (A) AND (B OR C) AND (D)
+        final_groups = []
         
-        # A: Population (Disease)
+        # Section A: Population (Disease)
         if d_parts:
-            # We wrap with OR if we have multiple candidates (Local + GPT)
-            unique_d = list(set(d_parts))
-            final_parts.append("(" + " AND ".join(unique_d) + ")" if len(unique_d) > 1 else unique_d[0])
+            # We join multiple A terms with AND
+            unique_d = sorted(list(set(d_parts)))
+            a_inner = " AND ".join(unique_d)
+            # Wrap as (A)
+            final_groups.append(f"({a_inner})")
         
-        # B+C: Intervention (Formula + Category)
+        # Section B + C: Intervention (Formula OR Category)
         cat_mesh = tkm_expander.tkm_categories.get(category, "")
-        int_pool = []
+        
+        # Group B (Formulas)
+        b_part = ""
         if f_parts:
-            int_pool.extend(list(set(f_parts)))
-            
-        if cat_mesh:
-            int_pool.append(cat_mesh)
-            
-        if int_pool:
-            final_parts.append("(" + " OR ".join(int_pool) + ")" if len(int_pool) > 1 else int_pool[0])
-            
-        # D: RCT
-        if include_rct:
-            rct_str = '("randomized controlled trial" OR trial OR "controlled clinical trial")'
-            final_parts.append(rct_str)
-            
-        # SAFETY: If after all that, we have NOTHING from the original text in our query, 
-        # we must at least include the original tokens.
-        if not d_parts and not f_parts and combined_text:
-            text_part = f'"{combined_text}"' if " " in combined_text else combined_text
-            final_parts.insert(0, text_part)
+            unique_f = sorted(list(set(f_parts)))
+            if len(unique_f) > 1:
+                b_part = "(" + " OR ".join(unique_f) + ")"
+            else:
+                b_part = unique_f[0]
 
-        res_query = " AND ".join(final_parts)
-        print(f"DEBUG: FINAL EXPANSION: {res_query}")
+        # Combine B and C
+        itv_group = ""
+        if b_part and cat_mesh:
+            itv_group = f"({b_part} OR {cat_mesh})"
+        elif b_part:
+            itv_group = f"({b_part})"
+        elif cat_mesh:
+            itv_group = f"({cat_mesh})"
+            
+        if itv_group:
+            final_groups.append(itv_group)
+            
+        # Section D: RCT
+        if include_rct:
+            rct_str = "'randomized controlled trial'/exp OR 'controlled clinical trial' OR random* OR 'placebo' OR trial"
+            # Wrap as (D)
+            final_groups.append(f"({rct_str})")
+            
+        # SAFETY: Preserve original input if no structures were built
+        if not final_groups and combined_text:
+            text_part = f'"{combined_text}"' if " " in combined_text else combined_text
+            final_groups.append(f"({text_part})")
+
+        res_query = " AND ".join(final_groups)
+        print(f"DEBUG: FINAL EXPANSION (Strict): {res_query}")
         sys.stdout.flush()
         return res_query
 

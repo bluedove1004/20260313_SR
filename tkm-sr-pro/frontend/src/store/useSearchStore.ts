@@ -9,11 +9,15 @@ interface SearchState {
 
 export const useSearchStore = create<SearchState>((set) => ({
   query: '',
-  selectedDBs: ['PubMed', 'KMbase', 'RISS', 'Cochrane'],
+  selectedDBs: ['pubmed'],
   setQuery: (q: string) => set({ query: q }),
-  toggleDB: (db: string) => set((state: SearchState) => ({
-    selectedDBs: state.selectedDBs.includes(db)
-      ? state.selectedDBs.filter((d: string) => d !== db)
-      : [...state.selectedDBs, db]
-  })),
+  toggleDB: (db: string) => set((state: SearchState) => {
+    const target = db.toLowerCase();
+    const isSelected = state.selectedDBs.some(d => d.toLowerCase() === target);
+    return {
+      selectedDBs: isSelected
+        ? state.selectedDBs.filter(d => d.toLowerCase() !== target)
+        : [...state.selectedDBs, target]
+    };
+  }),
 }));
