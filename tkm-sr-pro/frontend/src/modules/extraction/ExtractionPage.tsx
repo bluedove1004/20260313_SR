@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Database, FileText, Activity, Loader2, ChevronDown, ChevronUp, Sparkles, CheckCircle2, RefreshCw, User, Zap, BarChart2, ClipboardList, Upload, Maximize2, X } from 'lucide-react';
+import { Database, FileText, Activity, Loader2, ChevronDown, ChevronUp, Sparkles, CheckCircle, CheckCircle2, RefreshCw, User, Zap, BarChart2, ClipboardList, Upload, Maximize2, X, Clock } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -16,6 +16,8 @@ interface LitRecord {
   status: string;
   full_text: string | null;
   pico_data?: PicoData | null;
+  pico_last_extracted_at?: string | null;
+  pico_confirmed_at?: string | null;
 }
 
 interface PicoData {
@@ -141,6 +143,8 @@ export default function ExtractionPage() {
     isOpen: false, title: '', abstract: '', fullText: '', highlights: []
   });
   const [activeTab, setActiveTab] = useState<'pending' | 'completed'>('pending');
+  const [confirming, setConfirming] = useState<Record<string, boolean>>({});
+  const [batching, setBatching] = useState(false);
   const { currentProjectId } = useProjectStore();
   const { openAiApiKey } = useSettingsStore();
 
@@ -181,9 +185,11 @@ export default function ExtractionPage() {
       });
       setPicoResults(prev => ({ ...prev, [rec.id]: res.data }));
       setExpanded(prev => ({ ...prev, [rec.id]: true }));
-      if (res.data.saved_to_db) {
-        setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, status: 'EXTRACTED' } : r));
-      }
+      setRecords(prev => prev.map(r => r.id === rec.id ? { 
+        ...r, 
+        pico_data: res.data,
+        pico_last_extracted_at: res.data.pico_last_extracted_at 
+      } : r));
     } catch (e) {
       console.error(e);
       alert('PICO 추출 중 오류가 발생했습니다.');
@@ -209,9 +215,11 @@ export default function ExtractionPage() {
       });
       setPicoResults(prev => ({ ...prev, [rec.id]: res.data }));
       setExpanded(prev => ({ ...prev, [rec.id]: true }));
-      if (res.data.saved_to_db) {
-        setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, status: 'EXTRACTED' } : r));
-      }
+      setRecords(prev => prev.map(r => r.id === rec.id ? { 
+        ...r, 
+        pico_data: res.data,
+        pico_last_extracted_at: res.data.pico_last_extracted_at
+      } : r));
       alert('AI 강화 추출이 완료되었습니다!');
     } catch (e: any) {
       console.error(e);
@@ -219,6 +227,49 @@ export default function ExtractionPage() {
     } finally {
       setExtractingGpt(prev => ({ ...prev, [rec.id]: false }));
     }
+  };
+
+  const handleConfirmPico = async (id: string) => {
+    setConfirming(prev => ({ ...prev, [id]: true }));
+    try {
+      const res = await apiClient.post('/search/pico_confirm/', {
+        record_id: id,
+        pico_data: picoResults[id]
+      });
+      setRecords(prev => prev.map(r => r.id === id ? { 
+        ...r, 
+        status: res.data.status,
+        pico_confirmed_at: res.data.pico_confirmed_at
+      } : r));
+      alert('핵심 정보 추출(PICO)이 확정되었습니다.');
+    } catch (e) {
+      console.error(e);
+      alert('확정 중 오류가 발생했습니다.');
+    } finally {
+      setConfirming(prev => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const handleBatchPico = async () => {
+    const pending = records.filter(r => r.status !== 'EXTRACTED');
+    if (pending.length === 0) {
+      alert('추출할 논문이 없습니다.');
+      return;
+    }
+    if (!confirm(`${pending.length}건의 논문에 대해 AI 추출을 일괄 시작하시겠습니까?`)) return;
+    
+    setBatching(true);
+    let success = 0;
+    for (const rec of pending) {
+      try {
+        await handleExtract(rec);
+        success++;
+      } catch (e) {
+        console.error(`Failed batch for ${rec.id}`, e);
+      }
+    }
+    setBatching(false);
+    alert(`${success}건의 추출을 완료했습니다.`);
   };
 
   const handleFetchFullText = async (id: string) => {
@@ -300,6 +351,14 @@ export default function ExtractionPage() {
             className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50 shadow-sm disabled:opacity-50"
           >
             <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} /> 새로고침
+          </button>
+          <button 
+            onClick={handleBatchPico} 
+            disabled={batching || isLoading}
+            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 transition-all shadow-sm disabled:opacity-50"
+          >
+            {batching ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            전체 AI 일괄 추출
           </button>
           <button 
             onClick={handleExportExcel}
@@ -396,7 +455,19 @@ export default function ExtractionPage() {
                       {isDone && <span className="flex items-center gap-1 text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full"><CheckCircle2 size={12} /> PICO 추출 완료</span>}
                     </div>
                     <h3 className="text-base font-bold text-gray-900 leading-snug">{rec.title}</h3>
-                    <p className="text-sm text-gray-500 mt-1">{rec.authors}</p>
+                    <div className="flex items-center gap-4 mt-2">
+                      <p className="text-xs text-gray-400 truncate max-w-[400px]">{rec.authors}</p>
+                      {rec.pico_last_extracted_at && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-blue-500 font-medium bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                          <Clock size={12} /> 추출일: {new Date(rec.pico_last_extracted_at).toLocaleString()}
+                        </div>
+                      )}
+                      {rec.pico_confirmed_at && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full border border-green-100">
+                          <CheckCircle2 size={12} /> 확정일: {new Date(rec.pico_confirmed_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex gap-2 shrink-0">
@@ -637,6 +708,17 @@ export default function ExtractionPage() {
                           </div>
                         </div>
                       )}
+                      
+                      <div className="flex justify-end pt-4 border-t border-gray-100">
+                        <button
+                          onClick={() => handleConfirmPico(rec.id)}
+                          disabled={confirming[rec.id]}
+                          className="flex items-center gap-2 px-8 py-3 bg-tkm-main text-white rounded-xl font-bold hover:bg-tkm-dark transition-all shadow-lg shadow-tkm-light disabled:opacity-50"
+                        >
+                          {confirming[rec.id] ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />}
+                          추출 결과 확정 및 저장
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

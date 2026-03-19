@@ -384,7 +384,7 @@ class RctIncludedListView(APIView):
         )
         if project_id:
             qs = qs.filter(project_id=project_id)
-        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status', 'full_text', 'pico_data'))
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status', 'full_text', 'pico_data', 'pico_last_extracted_at', 'pico_confirmed_at'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class PicoExtractView(APIView):
@@ -409,11 +409,12 @@ class PicoExtractView(APIView):
             if record_id:
                 try:
                     rec = LiteratureRecord.objects.get(id=record_id)
-                    rec.status = LiteratureRecord.Status.EXTRACTED
-                    rec.pico_data = pico_data  # Save the PICO JSON result
+                    rec.pico_data = pico_data
+                    rec.pico_last_extracted_at = timezone.now()
                     rec.save()
                     pico_data['record_id'] = record_id
                     pico_data['saved_to_db'] = True
+                    pico_data['pico_last_extracted_at'] = rec.pico_last_extracted_at
                 except LiteratureRecord.DoesNotExist:
                     pico_data['saved_to_db'] = False
 
@@ -498,11 +499,12 @@ class PicoExtractGptView(APIView):
             if record_id:
                 try:
                     rec = LiteratureRecord.objects.get(id=record_id)
-                    rec.status = LiteratureRecord.Status.EXTRACTED
                     rec.pico_data = pico_data
+                    rec.pico_last_extracted_at = timezone.now() # Added
                     rec.save()
                     pico_data['record_id'] = record_id
                     pico_data['saved_to_db'] = True
+                    pico_data['pico_last_extracted_at'] = rec.pico_last_extracted_at # Added
                 except LiteratureRecord.DoesNotExist:
                     pico_data['saved_to_db'] = False
 
@@ -510,6 +512,26 @@ class PicoExtractGptView(APIView):
 
         except Exception as e:
             return Response({"error": f"ChatGPT 연동 오류: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class PicoConfirmView(APIView):
+    """Finalize PICO extraction, moving to EXTRACTED status."""
+    def post(self, request):
+        record_id = request.data.get('record_id')
+        pico_data = request.data.get('pico_data')
+        try:
+            rec = LiteratureRecord.objects.get(id=record_id)
+            if pico_data:
+                rec.pico_data = pico_data
+            rec.status = LiteratureRecord.Status.EXTRACTED
+            rec.pico_confirmed_at = timezone.now()
+            rec.save()
+            return Response({
+                "ok": True, 
+                "status": rec.status, 
+                "pico_confirmed_at": rec.pico_confirmed_at
+            }, status=status.HTTP_200_OK)
+        except LiteratureRecord.DoesNotExist:
+            return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
 
 class FulltextEligibleListView(APIView):
     """Return RCT_INCLUDED records waiting for full-text eligibility screening."""

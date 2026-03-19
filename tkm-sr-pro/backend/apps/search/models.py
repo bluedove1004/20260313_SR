@@ -57,6 +57,8 @@ class LiteratureRecord(models.Model):
     # Full-text screening fields
     full_text = models.TextField(blank=True, null=True)
     pico_data = models.JSONField(blank=True, null=True)
+    pico_last_extracted_at = models.DateTimeField(blank=True, null=True)
+    pico_confirmed_at = models.DateTimeField(blank=True, null=True)
     rob_data = models.JSONField(blank=True, null=True)
     rob_last_saved_at = models.DateTimeField(blank=True, null=True)
     rob_completed_at = models.DateTimeField(blank=True, null=True)
