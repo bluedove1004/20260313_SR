@@ -412,3 +412,103 @@ def screen_fulltext(req: FulltextScreenRequest):
         criteria_results=results,
         summary=summary
     )
+
+
+class RobDomainDecision(BaseModel):
+    decision: str  # 'low' | 'high' | 'unclear'
+    confidence: float
+    evidence: str
+
+class RobPredictionRequest(BaseModel):
+    title: str
+    abstract: str
+    full_text: Optional[str] = ""
+
+class RobPredictionResult(BaseModel):
+    domains: dict  # { 'd1': { decision, confidence, evidence }, ... }
+
+@app.post("/api/v1/ai/predict_rob", response_model=RobPredictionResult)
+def predict_rob(req: RobPredictionRequest):
+    """
+    Phase 2: Automated Risk of Bias Prediction for Cochrane ROB 1.0
+    Analyzes text and returns suggested risk level per domain with evidence.
+    """
+    title = req.title or ""
+    abstract = req.abstract or ""
+    full_text = req.full_text or ""
+    text = f"{title}. {abstract} {full_text}".lower()
+
+    # Domain keyword patterns
+    DOMAINS_LEXICON = {
+        "d1": {
+            "label": "Random sequence generation",
+            "low": ["computer-generated", "random number table", "coin tossing", "shuffling cards", "permuted block", "무작위 번호", "난수표"],
+            "high": ["quasi-random", "alternate", "case record number", "date of birth", "요일", "생년월일"],
+            "ignore": ["randomized controlled trial"] # common title filler
+        },
+        "d2": {
+            "label": "Allocation concealment",
+            "low": ["sequentially numbered opaque sealed envelopes", "central randomization", "pharmacy controlled", "numbered container", "중앙 무작위 배정", "은폐"],
+            "high": ["open-label", "unsealed envelopes", "open randomization table"]
+        },
+        "d3": {
+            "label": "Blinding of participants and personnel",
+            "low": ["double-blind", "placebo-controlled", "sham-controlled", "identical appearance", "이중 맹검", "눈가림"],
+            "high": ["open-label", "no blinding", "informed assignment", "비눈가림"]
+        },
+        "d4": {
+            "label": "Blinding of outcome assessment",
+            "low": ["blinded assessor", "masked evaluation", "blinded outcome", "evaluation was blinded", "독립적 평가"],
+            "high": ["unblinded assessor", "assessor knew", "open assessment"]
+        },
+        "d5": {
+            "label": "Incomplete outcome data",
+            "low": ["intention-to-treat", "itt analysis", "no drop-outs", "last observation carried forward", "탈락자 없음"],
+            "high": ["large attrition", "high drop-out", "excluded from analysis", "per-protocol", "탈락"]
+        },
+        "d6": {
+            "label": "Selective reporting",
+            "low": ["protocol was registered", "primary outcome as specified", "prospectively registered", "등록"],
+            "high": ["outcome omitted", "not reported", "discrepancy with protocol"]
+        },
+        "d7": {
+            "label": "Other bias",
+            "low": ["baseline balanced", "no conflict", "independent study", "임상 연구 가이드라인"],
+            "high": ["imbalanced baseline", "funded by manufacturer", "stopped early"]
+        }
+    }
+
+    sentences = re.split(r'(?<=[.!?])\s+', f"{title}. {abstract} {full_text}")
+    
+    def find_evidence(keywords_list):
+        for s in sentences:
+            if any(k in s.lower() for k in keywords_list):
+                return s.strip()
+        return ""
+
+    rob_results = {}
+    for domain_id, config in DOMAINS_LEXICON.items():
+        low_ev = find_evidence(config["low"])
+        high_ev = find_evidence(config.get("high", []))
+        
+        # Simple Logic
+        if low_ev:
+            decision = "low"
+            conf = 0.75 + (0.1 if full_text else 0)
+            evidence = low_ev
+        elif high_ev:
+            decision = "high"
+            conf = 0.85
+            evidence = high_ev
+        else:
+            decision = "unclear"
+            conf = 0.5
+            evidence = "명확한 언급이 없어 연구자 확인이 필요합니다."
+        
+        rob_results[domain_id] = {
+            "decision": decision,
+            "confidence": conf,
+            "evidence": evidence[:150] + ("..." if len(evidence) > 150 else "")
+        }
+
+    return RobPredictionResult(domains=rob_results)

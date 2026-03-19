@@ -8,6 +8,7 @@ interface Stats {
   totalSearched: number;
   deduplicated: number;
   reviewNeeded: number;
+  pendingScreening: number;
   rctFiltered: number;
   extracted: number;
 }
@@ -130,11 +131,12 @@ export default function DashboardPage() {
     totalSearched: 0,
     deduplicated: 0,
     reviewNeeded: 0,
+    pendingScreening: 0,
     rctFiltered: 0,
     extracted: 0
   });
 
-  const { currentProjectId } = useProjectStore();
+  const { currentProjectId, currentProjectName } = useProjectStore();
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -166,11 +168,7 @@ export default function DashboardPage() {
     URL.revokeObjectURL(url);
   };
 
-  const recentActivities = [
-    { id: 1, action: "Deduplication Completed", source: "PubMed, CNKI, Cochrane", count: 832, time: "2 hours ago" },
-    { id: 2, action: "RCT Screening Batch #4", source: "AI Auto-predicted", count: 120, time: "5 hours ago" },
-    { id: 3, action: "PICO Extraction Updated", source: "User 'Dr. Kim'", count: 12, time: "1 day ago" },
-  ];
+  const recentActivities: any[] = [];
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
@@ -181,7 +179,7 @@ export default function DashboardPage() {
             Project Overview
           </h1>
           <p className="mt-2 text-gray-500 text-lg">
-            '아토피 피부염 무작위 대조군 연구' 체계적 문헌고찰 프로젝트 파이프라인 진행 상태
+            '{currentProjectName || '프로젝트 상세 설명'}' 프로젝트 파이프라인 진행 상태
           </p>
         </div>
         <button
@@ -279,7 +277,7 @@ export default function DashboardPage() {
                 <div className="w-10 h-10 rounded-full bg-yellow-100 text-yellow-600 flex items-center justify-center font-bold">2</div>
                 <div>
                   <h4 className="font-bold text-gray-900">Review Deduplication Queue</h4>
-                  <p className="text-sm text-gray-500">240 records require human review</p>
+                  <p className="text-sm text-gray-500">{stats.reviewNeeded} records require human review</p>
                 </div>
               </div>
               <NavLink to="/dedup" className="flex items-center gap-1 text-sm font-bold text-tkm-main opacity-0 group-hover:opacity-100 transition-opacity">
@@ -292,7 +290,7 @@ export default function DashboardPage() {
                 <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center font-bold animate-pulse">3</div>
                 <div>
                   <h4 className="font-bold text-gray-900">Pending RCT Screening</h4>
-                  <p className="text-sm text-gray-500">AI has classified 120 new records to screen</p>
+                  <p className="text-sm text-gray-500">AI has classified {stats.pendingScreening} new records to screen</p>
                 </div>
               </div>
               <NavLink to="/screening-rct" className="flex items-center gap-1 text-sm font-bold text-tkm-main">

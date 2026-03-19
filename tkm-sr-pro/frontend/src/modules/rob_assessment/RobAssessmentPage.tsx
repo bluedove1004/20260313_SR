@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, AlertCircle, Save, FileText, Database } from 'lucide-react';
+import { ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, Save, FileText, Database, Sparkles, X, Maximize2 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useProjectStore } from '../../store/useProjectStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 
 interface LitRecord {
   id: string;
@@ -25,21 +26,68 @@ interface RobData {
 }
 
 const ROB_DOMAINS = [
-  { id: 'd1', label: 'Random sequence generation', labelKr: '무작위 순서 생성 (선택 바이어스)' },
-  { id: 'd2', label: 'Allocation concealment', labelKr: '배정 은폐 (선택 바이어스)' },
-  { id: 'd3', label: 'Blinding of participants and personnel', labelKr: '연구참여자/연구원의 눈가림 (실행 바이어스)' },
-  { id: 'd4', label: 'Blinding of outcome assessment', labelKr: '결과 평가자의 눈가림 (결과 확인 바이어스)' },
-  { id: 'd5', label: 'Incomplete outcome data', labelKr: '불충분한 결과 데이터 (탈락 바이어스)' },
+  { id: 'd1', label: 'Random sequence generation', labelKr: '무작위 배정순서 생성 (선택 바이어스)' },
+  { id: 'd2', label: 'Allocation concealment', labelKr: '배정순서 은폐 (선택 바이어스)' },
+  { id: 'd3', label: 'Blinding of participants and personnel', labelKr: '연구대상자와 연구자에 대한 눈가림 (실행 바이어스)' },
+  { id: 'd4', label: 'Blinding of outcome assessment', labelKr: '결과평가 눈가림 (결과 확인 바이어스)' },
+  { id: 'd5', label: 'Incomplete outcome data', labelKr: '불충분한 결과 자료(탈락 바이어스)' },
   { id: 'd6', label: 'Selective reporting', labelKr: '선택적 결과 보고 (보고 바이어스)' },
-  { id: 'd7', label: 'Other bias', labelKr: '기타 바이어스 (기타 가이드라인 준수 등)' },
+  { id: 'd7', label: 'Other bias', labelKr: '기타 삐뚤림 (기타 가이드라인 준수 등)' },
 ];
 
 const OPTIONS = [
-  { value: 'low', label: 'Low Risk', labelKr: '낮음', cls: 'bg-green-100 text-green-700 border-green-200' },
   { value: 'high', label: 'High Risk', labelKr: '높음', cls: 'bg-red-100 text-red-700 border-red-200' },
+  { value: 'low', label: 'Low Risk', labelKr: '낮음', cls: 'bg-green-100 text-green-700 border-green-200' },
   { value: 'unclear', label: 'Unclear', labelKr: '불분명', cls: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
-  { value: 'na', label: 'N/A', labelKr: '해당없음', cls: 'bg-gray-100 text-gray-700 border-gray-200' },
 ];
+
+function FullTextModal({ isOpen, onClose, title, abstract, fullText, highlights }: { isOpen: boolean; onClose: () => void; title: string; abstract: string; fullText: string; highlights: string[] }) {
+  if (!isOpen) return null;
+
+  const renderContent = (content: string, label: string) => {
+    if (!content) return null;
+    let result = content;
+    
+    highlights.filter(h => h && h.length > 10).forEach(h => {
+      try {
+        const escaped = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                         .replace(/\s+/g, '[\\s\\n\\r]+');
+        const regex = new RegExp(`(${escaped})`, 'gi');
+        result = result.replace(regex, '<mark class="bg-yellow-200 px-0.5 rounded text-gray-900">$1</mark>');
+      } catch (e) {}
+    });
+
+    return (
+      <div className="mb-8 last:mb-0">
+        <div className="flex items-center gap-2 mb-4 text-xs font-black uppercase text-gray-400">
+          <span>{label}</span>
+          <div className="h-px bg-gray-100 flex-1"></div>
+        </div>
+        <div className="text-gray-700 leading-relaxed font-sans whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: result }} />
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="p-4 border-b flex items-center justify-between bg-gray-50">
+          <h2 className="text-lg font-bold text-gray-800 line-clamp-1 flex items-center gap-2">
+            <FileText className="text-tkm-main" size={20} /> {title}
+          </h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full"><X size={20} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-8">
+          {renderContent(abstract, 'Abstract')}
+          {renderContent(fullText, 'Full-text')}
+        </div>
+        <div className="p-4 border-t bg-gray-50 flex justify-end">
+          <button onClick={onClose} className="px-6 py-2 bg-gray-800 text-white rounded-lg font-bold">닫기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function RobAssessmentPage() {
   const [records, setRecords] = useState<LitRecord[]>([]);
@@ -47,8 +95,14 @@ export default function RobAssessmentPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [assessments, setAssessments] = useState<Record<string, RobData>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [predicting, setPredicting] = useState<Record<string, boolean>>({});
   const [activeTab, setActiveTab] = useState<'pending' | 'completed'>('pending');
+  const [modalData, setModalData] = useState<{ isOpen: boolean; title: string; abstract: string; fullText: string; highlights: string[] }>({
+    isOpen: false, title: '', abstract: '', fullText: '', highlights: []
+  });
+  const [predictingGpt, setPredictingGpt] = useState<Record<string, boolean>>({});
   const { currentProjectId } = useProjectStore();
+  const { openAiApiKey } = useSettingsStore();
 
   const loadRecords = useCallback(async () => {
     setIsLoading(true);
@@ -57,7 +111,7 @@ export default function RobAssessmentPage() {
       const res = await apiClient.get(`/search/rob_list/${params}`);
       const recs: LitRecord[] = res.data.records;
       setRecords(recs);
-      
+
       const initRob: Record<string, RobData> = {};
       recs.forEach(r => {
         if (r.rob_data) {
@@ -89,6 +143,84 @@ export default function RobAssessmentPage() {
         [domainId]: { ...prev[recordId][domainId], ...value }
       }
     }));
+  };
+
+  const handlePredictRob = async (rec: LitRecord) => {
+    setPredicting(prev => ({ ...prev, [rec.id]: true }));
+    try {
+      const res = await apiClient.post('/search/rob_predict/', {
+        title: rec.title,
+        abstract: rec.abstract,
+        full_text: rec.full_text || '',
+      });
+
+      const aiDomains = res.data.domains;
+      const newRob: RobData = { ...assessments[rec.id] };
+
+      const highlights: string[] = [];
+      Object.keys(aiDomains).forEach(domId => {
+        if (aiDomains[domId]) {
+          newRob[domId] = {
+            decision: aiDomains[domId].decision,
+            comment: aiDomains[domId].evidence
+          };
+          if (aiDomains[domId].evidence) {
+            highlights.push(aiDomains[domId].evidence);
+          }
+        }
+      });
+
+      setAssessments(prev => ({ ...prev, [rec.id]: newRob }));
+      setModalData(prev => ({ ...prev, highlights }));
+      setExpanded(prev => ({ ...prev, [rec.id]: true }));
+      alert('AI가 질평가 항목을 분석하여 제안했습니다. 도메인별 판단 결과와 근거를 검토해 주세요.');
+    } catch (e) {
+      console.error(e);
+      alert('AI 분석 중 오류가 발생했습니다.');
+    } finally {
+      setPredicting(prev => ({ ...prev, [rec.id]: false }));
+    }
+  };
+
+  const handlePredictRobGpt = async (rec: LitRecord) => {
+    if (!openAiApiKey) {
+      alert('설정 메뉴에서 OpenAI API Key를 먼저 입력해주세요.');
+      return;
+    }
+    setPredictingGpt(prev => ({ ...prev, [rec.id]: true }));
+    try {
+      const res = await apiClient.post('/search/rob_predict_gpt/', {
+        api_key: openAiApiKey,
+        title: rec.title,
+        abstract: rec.abstract,
+        full_text: rec.full_text || '',
+      });
+
+      const aiDomains = res.data.domains;
+      const newRob: RobData = { ...assessments[rec.id] };
+      const highlights: string[] = [];
+
+      Object.keys(aiDomains).forEach(domId => {
+        if (aiDomains[domId]) {
+          newRob[domId] = {
+            decision: aiDomains[domId].decision,
+            comment: aiDomains[domId].evidence
+          };
+          if (aiDomains[domId].evidence) highlights.push(aiDomains[domId].evidence);
+        }
+      });
+
+      setAssessments(prev => ({ ...prev, [rec.id]: newRob }));
+      setModalData(prev => ({ ...prev, highlights }));
+      setExpanded(prev => ({ ...prev, [rec.id]: true }));
+      alert('GPT-4o가 질평가 항목을 정밀하게 분석하여 제안했습니다. 내용을 검토해 주세요.');
+    } catch (e: any) {
+      console.error(e);
+      const msg = e.response?.data?.error || 'AI 강화 분석 중 오류가 발생했습니다.';
+      alert(msg);
+    } finally {
+      setPredictingGpt(prev => ({ ...prev, [rec.id]: false }));
+    }
   };
 
   const handleSaveRob = async (id: string) => {
@@ -128,7 +260,7 @@ export default function RobAssessmentPage() {
     }
   };
 
-  const filteredRecords = records.filter(r => 
+  const filteredRecords = records.filter(r =>
     activeTab === 'completed' ? r.status === 'ROB_COMPLETED' : r.status === 'EXTRACTED'
   );
 
@@ -150,7 +282,7 @@ export default function RobAssessmentPage() {
             className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50 shadow-sm disabled:opacity-50 transition-all">
             <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} /> 새로고침
           </button>
-          <button 
+          <button
             onClick={handleExportExcel}
             className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-all shadow-lg shadow-green-100"
           >
@@ -164,11 +296,10 @@ export default function RobAssessmentPage() {
       <div className="flex border-b border-gray-200">
         <button
           onClick={() => setActiveTab('pending')}
-          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${
-            activeTab === 'pending' 
-            ? 'border-tkm-main text-tkm-main' 
+          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'pending'
+            ? 'border-tkm-main text-tkm-main'
             : 'border-transparent text-gray-400 hover:text-gray-600'
-          }`}
+            }`}
         >
           평가 대기 (Pending)
           <span className="ml-2 bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full text-xs">
@@ -177,11 +308,10 @@ export default function RobAssessmentPage() {
         </button>
         <button
           onClick={() => setActiveTab('completed')}
-          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${
-            activeTab === 'completed' 
-            ? 'border-tkm-main text-tkm-main' 
+          className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'completed'
+            ? 'border-tkm-main text-tkm-main'
             : 'border-transparent text-gray-400 hover:text-gray-600'
-          }`}
+            }`}
         >
           평가 완료 (Completed)
           <span className="ml-2 bg-tkm-light text-tkm-main px-2 py-0.5 rounded-full text-xs">
@@ -234,14 +364,66 @@ export default function RobAssessmentPage() {
                 {isOpen && (
                   <div className="mt-6 pt-6 border-t border-gray-100 space-y-8 animate-in slide-in-from-top-2 duration-200">
                     {/* Basic Info */}
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="bg-gray-50 rounded-xl p-4">
-                        <div className="font-bold text-gray-700 mb-2 flex items-center gap-2"><FileText size={16} /> Abstract</div>
-                        <p className="text-gray-600 line-clamp-6 leading-relaxed">{rec.abstract}</p>
+                    <div className="flex justify-between items-center bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                          <Sparkles size={20} />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">AI 자동 분석 및 제안</p>
+                          <p className="text-xs text-gray-500">AI가 문헌 본문을 분석하여 7가지 도메인의 위험도와 근거를 제안합니다.</p>
+                        </div>
                       </div>
-                      <div className="bg-gray-50 rounded-xl p-4 flex flex-col justify-center items-center text-gray-400">
-                        <AlertCircle size={32} className="mb-2 opacity-20" />
-                        <p className="text-center text-xs">원문 열람을 위한 원문 분석 창을 활용하세요.</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handlePredictRob(rec)}
+                          disabled={predicting[rec.id] || predictingGpt[rec.id]}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-white border border-blue-200 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-50 transition-all shadow-sm disabled:opacity-50"
+                        >
+                          {predicting[rec.id] ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                          AI 자동 제안
+                        </button>
+                        <button
+                          onClick={() => handlePredictRobGpt(rec)}
+                          disabled={predicting[rec.id] || predictingGpt[rec.id]}
+                          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-md shadow-blue-100 disabled:opacity-50"
+                        >
+                          {predictingGpt[rec.id] ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                          AI 강화 추출 (GPT-4o)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 relative group">
+                        <div className="font-bold text-gray-700 mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2"><FileText size={16} className="text-green-600" /> Abstract (초록)</div>
+                          <button 
+                            onClick={() => setModalData({
+                              isOpen: true, title: rec.title, abstract: rec.abstract, fullText: rec.full_text || '', highlights: []
+                            })}
+                            className="bg-white p-1.5 rounded-lg border shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" title="확대해서 보기">
+                            <Maximize2 size={14} className="text-gray-600" />
+                          </button>
+                        </div>
+                        <p className="text-gray-600 line-clamp-6 leading-relaxed text-xs">
+                          {rec.abstract || <span className="text-gray-300 italic">내용이 없습니다.</span>}
+                        </p>
+                      </div>
+                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 relative group">
+                        <div className="font-bold text-gray-700 mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2"><FileText size={16} className="text-blue-600" /> Full-text (원문)</div>
+                          <button 
+                            onClick={() => setModalData({
+                              isOpen: true, title: rec.title, abstract: rec.abstract, fullText: rec.full_text || '', highlights: []
+                            })}
+                            className="bg-white p-1.5 rounded-lg border shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" title="확대해서 보기">
+                            <Maximize2 size={14} className="text-gray-600" />
+                          </button>
+                        </div>
+                        <p className="text-gray-600 line-clamp-6 leading-relaxed text-xs">
+                          {rec.full_text || <span className="text-gray-300 italic">원문 텍스트 데이터가 없습니다. 원문 관리창에서 먼저 텍스트를 추출해 주세요.</span>}
+                        </p>
                       </div>
                     </div>
 
@@ -257,17 +439,16 @@ export default function RobAssessmentPage() {
                               <div>
                                 <h4 className="font-bold text-gray-800 mb-1">{domain.labelKr}</h4>
                                 <p className="text-xs text-gray-400 font-mono mb-4">{domain.label}</p>
-                                
+
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                   {OPTIONS.map((opt) => (
                                     <button
                                       key={opt.value}
                                       onClick={() => handleValueChange(rec.id, domain.id, { decision: opt.value })}
-                                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
-                                        rob?.[domain.id]?.decision === opt.value
+                                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${rob?.[domain.id]?.decision === opt.value
                                         ? opt.cls + ' ring-2 ring-offset-1 ring-current shadow-sm'
                                         : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300'
-                                      }`}
+                                        }`}
                                     >
                                       {opt.labelKr}
                                     </button>
@@ -308,6 +489,14 @@ export default function RobAssessmentPage() {
           );
         })}
       </div>
+      <FullTextModal
+        isOpen={modalData.isOpen}
+        onClose={() => setModalData(prev => ({ ...prev, isOpen: false }))}
+        title={modalData.title}
+        abstract={modalData.abstract}
+        fullText={modalData.fullText}
+        highlights={modalData.highlights}
+      />
     </div>
   );
 }

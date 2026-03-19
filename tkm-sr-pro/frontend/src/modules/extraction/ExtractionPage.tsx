@@ -212,10 +212,10 @@ export default function ExtractionPage() {
       if (res.data.saved_to_db) {
         setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, status: 'EXTRACTED' } : r));
       }
-      alert('ChatGPT 강화 추출이 완료되었습니다!');
+      alert('AI 강화 추출이 완료되었습니다!');
     } catch (e: any) {
       console.error(e);
-      alert(e.response?.data?.error || 'ChatGPT PICO 추출 중 오류가 발생했습니다.');
+      alert(e.response?.data?.error || 'AI 강화 PICO 추출 중 오류가 발생했습니다.');
     } finally {
       setExtractingGpt(prev => ({ ...prev, [rec.id]: false }));
     }
@@ -414,10 +414,10 @@ export default function ExtractionPage() {
                       onClick={() => handleExtractGpt(rec)}
                       disabled={isExtracting || extractingGpt[rec.id]}
                       className="flex items-center gap-2 px-3 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs transition-all disabled:opacity-50 whitespace-nowrap shadow-sm border border-blue-400"
-                      title="ChatGPT(GPT-4o) 강화 추출"
+                      title="AI(GPT-4o) 강화 추출"
                     >
                       {extractingGpt[rec.id] ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                      {extractingGpt[rec.id] ? 'GPT 분석 중...' : 'GPT 강화 추출'}
+                      {extractingGpt[rec.id] ? 'AI 분석 중...' : 'AI 강화 추출'}
                     </button>
                   </div>
                 </div>
@@ -496,7 +496,7 @@ export default function ExtractionPage() {
                       className="flex-1 flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
                     >
                       {extractingGpt[rec.id] ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                      {extractingGpt[rec.id] ? 'GPT 추출 중...' : 'ChatGPT 강화 추출'}
+                      {extractingGpt[rec.id] ? 'AI 추출 중...' : 'AI 강화 추출'}
                     </button>
                   </div>
                 </div>

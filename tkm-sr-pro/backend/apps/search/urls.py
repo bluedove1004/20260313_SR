@@ -7,7 +7,7 @@ from .views import (FederatedSearchView, ExpandQueryView, SaveRecordsView, Dedup
                     FetchFullTextView, UploadFullTextPDFView,
                     ProjectListView, ProjectDetailView, ExportRctExcelView,
                     ExportRctScreeningExcelView, ExportFulltextScreeningExcelView,
-                    RobAssessmentListView, RobSaveView, ExportRobExcelView)
+                    RobAssessmentListView, RobSaveView, RobPredictView, RobPredictGptView, ExportRobExcelView)
 
 urlpatterns = [
     path('federated_search/', FederatedSearchView.as_view(), name='federated_search'),
@@ -34,5 +34,7 @@ urlpatterns = [
     path('export_fulltext_screening/', ExportFulltextScreeningExcelView.as_view(), name='export_fulltext_screening'),
     path('rob_list/', RobAssessmentListView.as_view(), name='rob_list'),
     path('rob_save/', RobSaveView.as_view(), name='rob_save'),
+    path('rob_predict/', RobPredictView.as_view(), name='rob_predict'),
+    path('rob_predict_gpt/', RobPredictGptView.as_view(), name='rob_predict_gpt'),
     path('export_rob/', ExportRobExcelView.as_view(), name='export_rob'),
 ]

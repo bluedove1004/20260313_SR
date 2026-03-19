@@ -327,10 +327,18 @@ class DashboardStatsView(APIView):
 
             total = qs.count()
             if total == 0:
-                raise Exception("Empty DB")
+                return Response({
+                    "totalSearched": 0,
+                    "deduplicated": 0,
+                    "reviewNeeded": 0,
+                    "pendingScreening": 0,
+                    "rctFiltered": 0,
+                    "extracted": 0
+                }, status=status.HTTP_200_OK)
 
             dedup_rejected = qs.filter(status=LiteratureRecord.Status.DEDUP_REJECTED).count()
             review_needed = qs.filter(status=LiteratureRecord.Status.DEDUP_REVIEW).count()
+            pending_screening = qs.filter(status=LiteratureRecord.Status.SCREENING_PENDING).count()
             dedup = total - dedup_rejected - review_needed
 
             rct = qs.filter(
@@ -346,16 +354,20 @@ class DashboardStatsView(APIView):
                 "totalSearched": total,
                 "deduplicated": dedup,
                 "reviewNeeded": review_needed,
+                "pendingScreening": pending_screening,
                 "rctFiltered": rct,
                 "extracted": extracted
             }, status=status.HTTP_200_OK)
             
-        except Exception:
+        except Exception as e:
+            print(f"Stats error: {e}")
             return Response({
-                "totalSearched": 12450,
-                "deduplicated": 3240,
-                "rctFiltered": 412,
-                "extracted": 45
+                "totalSearched": 0,
+                "deduplicated": 0,
+                "reviewNeeded": 0,
+                "pendingScreening": 0,
+                "rctFiltered": 0,
+                "extracted": 0
             }, status=status.HTTP_200_OK)
 
 class RctIncludedListView(APIView):
@@ -938,6 +950,101 @@ class RobSaveView(APIView):
             return Response({"ok": True, "id": record_id}, status=status.HTTP_200_OK)
         except LiteratureRecord.DoesNotExist:
             return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class RobPredictView(APIView):
+    """Proxy to AI engine for automated ROB suggestions."""
+    def post(self, request):
+        ai_url = os.getenv('AI_ENGINE_URL', 'http://ai_engine:8001')
+        payload = {
+            "title": request.data.get('title', ''),
+            "abstract": request.data.get('abstract', ''),
+            "full_text": request.data.get('full_text', ''),
+        }
+        try:
+            resp = http_requests.post(f"{ai_url}/api/v1/ai/predict_rob", json=payload, timeout=25)
+            resp.raise_for_status()
+            return Response(resp.json(), status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+class RobPredictGptView(APIView):
+    """Enhanced ROB assessment using GPT-4o and user API key."""
+    def post(self, request):
+        api_key = request.data.get('api_key')
+        title = request.data.get('title', '')
+        abstract = request.data.get('abstract', '')
+        full_text = request.data.get('full_text', '')
+
+        if not api_key:
+            return Response({"error": "OpenAI API Key가 필요합니다. 설정 메뉴에서 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Limit text for context window
+        text_content = f"Title: {title}\nAbstract: {abstract}\n\nFull Text Snippet:\n{full_text[:18000]}"
+        
+        prompt = f"""
+        Analyze the following research article for Risk of Bias using Cochrane ROB 1.0 (7 domains).
+        For each domain, provide:
+        1. A decision: 'low', 'high', or 'unclear'.
+        2. A short supporting sentence (evidence) directly from the text if possible.
+        3. A confidence score (0-1).
+
+        Domains:
+        - d1: Random sequence generation (Selection bias)
+        - d2: Allocation concealment (Selection bias)
+        - d3: Blinding of participants and personnel (Performance bias)
+        - d4: Blinding of outcome assessment (Detection bias)
+        - d5: Incomplete outcome data (Attrition bias)
+        - d6: Selective reporting (Reporting bias)
+        - d7: Other bias (Any other potential source of bias)
+
+        Return the result in JSON format ONLY, matching the structure:
+        {{
+          "domains": {{
+            "d1": {{ "decision": "string", "evidence": "string", "confidence": number }},
+            "d2": {{ ... }},
+            ...
+            "d7": {{ ... }}
+          }}
+        }}
+        
+        Text to analyze:
+        {text_content}
+        """
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            data = {
+                "model": "gpt-4o",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "You are a professional medical literature reviewer specialized in Cochrane ROB assessment."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": { "type": "json_object" },
+                "temperature": 0.1
+            }
+
+            response = http_requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=90
+            )
+            
+            if response.status_code != 200:
+                err_msg = response.json().get("error", {}).get("message", "Unknown error")
+                return Response({"error": f"OpenAI API 오류: {err_msg}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            rob_data = json.loads(response.json()["choices"][0]["message"]["content"])
+            return Response(rob_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ExportRobExcelView(APIView):
     """Excel export for ROB Assessment results."""
