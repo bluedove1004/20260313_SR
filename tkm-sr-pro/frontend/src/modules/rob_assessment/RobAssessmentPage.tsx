@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, Save, FileText, Database, Sparkles, X, Maximize2 } from 'lucide-react';
+import { ShieldCheck, RefreshCw, Loader2, ChevronDown, ChevronUp, Save, FileText, Database, Sparkles, X, Maximize2, Clock, CheckCircle } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -16,6 +16,8 @@ interface LitRecord {
   status: string;
   full_text: string | null;
   rob_data?: RobData | null;
+  rob_last_saved_at?: string | null;
+  rob_completed_at?: string | null;
 }
 
 interface RobData {
@@ -50,8 +52,11 @@ function FullTextModal({ isOpen, onClose, title, abstract, fullText, highlights 
     
     highlights.filter(h => h && h.length > 10).forEach(h => {
       try {
-        const escaped = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-                         .replace(/\s+/g, '[\\s\\n\\r]+');
+        // Clean up the match string: escape regex special chars and normalize spaces
+        const escaped = h.trim()
+                         .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                         .replace(/\s+/g, '[\\s\\n\\r]+')
+                         .replace(/\\\.\.\.$/, ''); // remove trailing ellipsis
         const regex = new RegExp(`(${escaped})`, 'gi');
         result = result.replace(regex, '<mark class="bg-yellow-200 px-0.5 rounded text-gray-900">$1</mark>');
       } catch (e) {}
@@ -173,7 +178,11 @@ export default function RobAssessmentPage() {
       setAssessments(prev => ({ ...prev, [rec.id]: newRob }));
       setModalData(prev => ({ ...prev, highlights }));
       setExpanded(prev => ({ ...prev, [rec.id]: true }));
-      alert('AI가 질평가 항목을 분석하여 제안했습니다. 도메인별 판단 결과와 근거를 검토해 주세요.');
+      
+      // Auto-save temporary
+      handleSaveRob(rec.id, false, newRob);
+      
+      alert('AI가 질평가 항목을 분석하여 임시 저장했습니다. 도메인별 판단 결과와 근거를 검토해 주세요.');
     } catch (e) {
       console.error(e);
       alert('AI 분석 중 오류가 발생했습니다.');
@@ -213,7 +222,11 @@ export default function RobAssessmentPage() {
       setAssessments(prev => ({ ...prev, [rec.id]: newRob }));
       setModalData(prev => ({ ...prev, highlights }));
       setExpanded(prev => ({ ...prev, [rec.id]: true }));
-      alert('GPT-4o가 질평가 항목을 정밀하게 분석하여 제안했습니다. 내용을 검토해 주세요.');
+
+      // Auto-save temporary
+      handleSaveRob(rec.id, false, newRob);
+
+      alert('GPT-4o가 질평가 항목을 분석하여 임시 저장했습니다. 내용을 검토해 주세요.');
     } catch (e: any) {
       console.error(e);
       const msg = e.response?.data?.error || 'AI 강화 분석 중 오류가 발생했습니다.';
@@ -223,16 +236,27 @@ export default function RobAssessmentPage() {
     }
   };
 
-  const handleSaveRob = async (id: string) => {
+  const handleSaveRob = async (id: string, complete: boolean = true, customData?: RobData) => {
     setSaving(prev => ({ ...prev, [id]: true }));
     try {
-      await apiClient.post('/search/rob_save/', {
+      const res = await apiClient.post('/search/rob_save/', {
         record_id: id,
-        rob_data: assessments[id]
+        rob_data: customData || assessments[id],
+        complete: complete
       });
-      // Update local status
-      setRecords(prev => prev.map(r => r.id === id ? { ...r, status: 'ROB_COMPLETED' } : r));
-      alert('질평가(ROB) 결과가 저장되었습니다.');
+      // Update local record data (timestamps and status)
+      setRecords(prev => prev.map(r => r.id === id ? { 
+        ...r, 
+        status: res.data.status,
+        rob_last_saved_at: res.data.rob_last_saved_at,
+        rob_completed_at: res.data.rob_completed_at
+      } : r));
+      
+      if (complete) {
+        alert('질평가(ROB)가 완료되었습니다. 평가 완료 탭으로 이동합니다.');
+      } else if (!customData) {
+        alert('내용이 임시 저장되었습니다.');
+      }
     } catch (e) {
       console.error(e);
       alert('저장 중 오류가 발생했습니다.');
@@ -351,7 +375,19 @@ export default function RobAssessmentPage() {
                       <span className="text-xs text-gray-400">{rec.year}</span>
                     </div>
                     <h3 className="text-lg font-bold text-gray-900 leading-snug truncate">{rec.title}</h3>
-                    <p className="text-sm text-gray-500 mt-1 truncate">{rec.authors}</p>
+                    <div className="flex items-center gap-4 mt-2">
+                      <p className="text-xs text-gray-500 truncate">{rec.authors}</p>
+                      {rec.rob_last_saved_at && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-blue-500 font-medium bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                          <Clock size={12} /> 임시저장: {new Date(rec.rob_last_saved_at).toLocaleString()}
+                        </div>
+                      )}
+                      {rec.rob_completed_at && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full border border-green-100">
+                          <CheckCircle size={12} /> 평가완료: {new Date(rec.rob_completed_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <button
                     onClick={() => setExpanded(prev => ({ ...prev, [rec.id]: !isOpen }))}
@@ -399,9 +435,12 @@ export default function RobAssessmentPage() {
                         <div className="font-bold text-gray-700 mb-2 flex items-center justify-between">
                           <div className="flex items-center gap-2"><FileText size={16} className="text-green-600" /> Abstract (초록)</div>
                           <button 
-                            onClick={() => setModalData({
-                              isOpen: true, title: rec.title, abstract: rec.abstract, fullText: rec.full_text || '', highlights: []
-                            })}
+                            onClick={() => {
+                              const evs = Object.values(assessments[rec.id] || {}).map(v => v.comment).filter(c => c && c.length > 10);
+                              setModalData({
+                                isOpen: true, title: rec.title, abstract: rec.abstract, fullText: rec.full_text || '', highlights: evs
+                              });
+                            }}
                             className="bg-white p-1.5 rounded-lg border shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" title="확대해서 보기">
                             <Maximize2 size={14} className="text-gray-600" />
                           </button>
@@ -414,9 +453,12 @@ export default function RobAssessmentPage() {
                         <div className="font-bold text-gray-700 mb-2 flex items-center justify-between">
                           <div className="flex items-center gap-2"><FileText size={16} className="text-blue-600" /> Full-text (원문)</div>
                           <button 
-                            onClick={() => setModalData({
-                              isOpen: true, title: rec.title, abstract: rec.abstract, fullText: rec.full_text || '', highlights: []
-                            })}
+                            onClick={() => {
+                              const evs = Object.values(assessments[rec.id] || {}).map(v => v.comment).filter(c => c && c.length > 10);
+                              setModalData({
+                                isOpen: true, title: rec.title, abstract: rec.abstract, fullText: rec.full_text || '', highlights: evs
+                              });
+                            }}
                             className="bg-white p-1.5 rounded-lg border shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" title="확대해서 보기">
                             <Maximize2 size={14} className="text-gray-600" />
                           </button>
@@ -474,12 +516,20 @@ export default function RobAssessmentPage() {
                     {/* Actions */}
                     <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
                       <button
-                        onClick={() => handleSaveRob(rec.id)}
+                        onClick={() => handleSaveRob(rec.id, false)}
+                        disabled={isSaving}
+                        className="flex items-center gap-2 px-6 py-3 bg-white border-2 border-gray-200 text-gray-600 rounded-xl font-bold hover:bg-gray-50 transition-all disabled:opacity-50"
+                      >
+                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                        임시저장
+                      </button>
+                      <button
+                        onClick={() => handleSaveRob(rec.id, true)}
                         disabled={isSaving}
                         className="flex items-center gap-2 px-8 py-3 bg-tkm-main text-white rounded-xl font-bold hover:bg-tkm-dark transition-all shadow-lg shadow-tkm-light disabled:opacity-50"
                       >
-                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                        질평가 결과 저장하기
+                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />}
+                        질 평가 완료 (확정)
                       </button>
                     </div>
                   </div>

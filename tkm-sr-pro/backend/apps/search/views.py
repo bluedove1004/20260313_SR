@@ -9,6 +9,7 @@ import pdfplumber
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill
 from django.http import HttpResponse
+from django.utils import timezone
 from .utils.api_clients import SearchManager
 from .utils.mesh_expander import MeSHExpander
 from .utils.tkm_expander import TKMExpander
@@ -932,22 +933,52 @@ class RobAssessmentListView(APIView):
         )
         if project_id:
             qs = qs.filter(project_id=project_id)
-        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status', 'full_text', 'pico_data', 'rob_data'))
+        records = list(qs.values('id', 'title', 'abstract', 'authors', 'year', 'pmid', 'doi', 'source_db', 'status', 'full_text', 'pico_data', 'rob_data', 'rob_last_saved_at', 'rob_completed_at'))
         return Response({"records": records, "count": len(records)}, status=status.HTTP_200_OK)
 
 class RobSaveView(APIView):
     """Save ROB assessment data for a record."""
     def post(self, request):
+        print(f"DEBUG: RobSaveView - data: {request.data}")
         record_id = request.data.get('record_id')
         rob_data = request.data.get('rob_data')
+        
+        # Explicit boolean parsing
+        complete_raw = request.data.get('complete', True)
+        if isinstance(complete_raw, str):
+            complete = complete_raw.lower() == 'true'
+        else:
+            complete = bool(complete_raw)
+            
+        print(f"DEBUG: RobSaveView - record_id: {record_id}, complete: {complete}")
+        
         if not record_id or rob_data is None:
             return Response({"error": "Missing record_id or rob_data"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             rec = LiteratureRecord.objects.get(id=record_id)
             rec.rob_data = rob_data
-            rec.status = LiteratureRecord.Status.ROB_COMPLETED
+            now = timezone.now()
+            rec.rob_last_saved_at = now
+            if complete:
+                rec.status = LiteratureRecord.Status.ROB_COMPLETED
+                rec.rob_completed_at = now
+            else:
+                # Ensure status stays as EXTRACTED if it's a temp save
+                if rec.status == LiteratureRecord.Status.ROB_COMPLETED and not complete:
+                     # If it was completed but user clicked temp save, maybe keep it completed or revert?
+                     # Revert to EXTRACTED to move back to pending tab if requested
+                     rec.status = LiteratureRecord.Status.EXTRACTED
+                elif rec.status != LiteratureRecord.Status.ROB_COMPLETED:
+                     rec.status = LiteratureRecord.Status.EXTRACTED
+
             rec.save()
-            return Response({"ok": True, "id": record_id}, status=status.HTTP_200_OK)
+            return Response({
+                "ok": True, 
+                "id": record_id, 
+                "rob_last_saved_at": rec.rob_last_saved_at.isoformat() if rec.rob_last_saved_at else None, 
+                "rob_completed_at": rec.rob_completed_at.isoformat() if rec.rob_completed_at else None,
+                "status": rec.status
+            }, status=status.HTTP_200_OK)
         except LiteratureRecord.DoesNotExist:
             return Response({"error": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
 

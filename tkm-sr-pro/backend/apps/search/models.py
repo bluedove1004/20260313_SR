@@ -58,6 +58,8 @@ class LiteratureRecord(models.Model):
     full_text = models.TextField(blank=True, null=True)
     pico_data = models.JSONField(blank=True, null=True)
     rob_data = models.JSONField(blank=True, null=True)
+    rob_last_saved_at = models.DateTimeField(blank=True, null=True)
+    rob_completed_at = models.DateTimeField(blank=True, null=True)
     exclusion_reason = models.TextField(blank=True, null=True)
     reviewer_notes = models.TextField(blank=True, null=True)
 
