@@ -9,6 +9,7 @@ import FulltextScreeningPage from './modules/screening_fulltext/FulltextScreenin
 import ProjectsPage from './modules/projects/ProjectsPage';
 import RobAssessmentPage from './modules/rob_assessment/RobAssessmentPage';
 import SettingsPage from './modules/settings/SettingsPage';
+import SynthesisPage from './modules/evidence_synthesis/SynthesisPage';
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
           <Route path="/screening-fulltext" element={<FulltextScreeningPage />} />
           <Route path="/extraction" element={<ExtractionPage />} />
           <Route path="/rob" element={<RobAssessmentPage />} />
+          <Route path="/synthesis" element={<SynthesisPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>

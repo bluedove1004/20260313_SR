@@ -1099,6 +1099,102 @@ class RobPredictGptView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class SynthesisDataView(APIView):
+    """Retrieve all data needed for meta-analysis and synthesis."""
+    def get(self, request):
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
+            status__in=[
+                LiteratureRecord.Status.EXTRACTED,
+                LiteratureRecord.Status.ROB_COMPLETED
+            ]
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+            
+        records = list(qs.values(
+            'id', 'title', 'authors', 'year', 'journal', 'pico_data', 'rob_data', 'status'
+        ))
+        
+        stats = {
+            "total_included": qs.count(),
+            "rob_completed": qs.filter(status=LiteratureRecord.Status.ROB_COMPLETED).count(),
+            "pico_extracted": qs.filter(pico_data__isnull=False).count()
+        }
+        
+        return Response({
+            "records": records,
+            "stats": stats
+        }, status=status.HTTP_200_OK)
+
+class ExportSynthesisExcelView(APIView):
+    """Excel export for evidence synthesis (PICO + ROB)."""
+    def get(self, request):
+        print(f"DEBUG: ExportSynthesisExcelView.get - project_id: {request.query_params.get('project_id')}")
+        project_id = request.query_params.get('project_id')
+        qs = LiteratureRecord.objects.filter(
+            status__in=[
+                LiteratureRecord.Status.EXTRACTED,
+                LiteratureRecord.Status.ROB_COMPLETED
+            ]
+        )
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+            
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Evidence_Synthesis"
+        
+        # Comprehensive headers
+        headers = ["ID", "Title", "Authors", "Year", "Journal", "Status",
+                   "P_Diagnosis", "P_Sample_Size", "I_Name", "C_Comparison", "O_Primary_Outcome",
+                   "RS_Generation", "A_Concealment", "B_Participants", "B_Outcome", "I_Outcome_Data", "S_Reporting", "O_Bias",
+                   "P_Values", "Effect_Sizes"]
+                   
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        for row_num, rec in enumerate(qs.order_by('id'), 2):
+            pico = rec.pico_data or {}
+            rob = rec.rob_data or {}
+            
+            row_data = [
+                rec.id, rec.title, rec.authors, rec.year, rec.journal, rec.status,
+                pico.get('population', {}).get('diagnosis', ''),
+                pico.get('population', {}).get('sample_size', ''),
+                pico.get('intervention', {}).get('name', ''),
+                pico.get('comparison', {}).get('type', ''),
+                pico.get('outcome', {}).get('primary_outcome', ''),
+                rob.get('d1', {}).get('decision', ''),
+                rob.get('d2', {}).get('decision', ''),
+                rob.get('d3', {}).get('decision', ''),
+                rob.get('d4', {}).get('decision', ''),
+                rob.get('d5', {}).get('decision', ''),
+                rob.get('d6', {}).get('decision', ''),
+                rob.get('d7', {}).get('decision', ''),
+                ", ".join(pico.get('statistical_summary', {}).get('p_values', [])),
+                ", ".join(pico.get('statistical_summary', {}).get('effect_sizes', []))
+            ]
+            
+            for col_num, value in enumerate(row_data, 1):
+                ws.cell(row=row_num, column=col_num, value=str(value) if value is not None else "")
+
+        # Resize columns
+        for col in ws.columns:
+            column = col[0].column_letter
+            ws.column_dimensions[column].width = 25
+
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename=Evidence_Synthesis_Summary.xlsx'
+        wb.save(response)
+        return response
+
 class ExportRobExcelView(APIView):
     """Excel export for ROB Assessment results."""
     def get(self, request):
